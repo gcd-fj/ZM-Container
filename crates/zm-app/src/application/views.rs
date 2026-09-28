@@ -330,7 +330,7 @@ impl ZmApp {
                                 .hint_text("请输入账号密码")
                                 .desired_width(f32::INFINITY),
                         );
-                        ui.checkbox(&mut app.manager_save_password, "安全保存到系统密钥环");
+                        ui.checkbox(&mut app.manager_save_password, "记住密码（保存到本地文件）");
                         ui.add_space(6.0);
                         if ui
                             .add_sized(
@@ -344,7 +344,7 @@ impl ZmApp {
                             *add_requested = true;
                         }
                         ui.label(
-                            egui::RichText::new("密码不写入配置文件；取消勾选后只在本次运行有效")
+                            egui::RichText::new("密码以明文保存在本机；取消勾选后只在本次运行有效")
                                 .small()
                                 .color(palette::MUTED_DARK),
                         );

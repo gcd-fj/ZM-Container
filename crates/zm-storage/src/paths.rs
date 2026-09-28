@@ -29,26 +29,37 @@ impl AppPaths {
             dirs::cache_dir().ok_or_else(|| ZmError::Config("无法确定缓存目录".into()))?,
             dirs::data_local_dir().ok_or_else(|| ZmError::Config("无法确定数据目录".into()))?,
         );
-        Ok(Self {
-            config_dir: config.join("zm-linux"),
+        Ok(Self::from_roots(config, cache, data))
+    }
+
+    fn from_roots(config: PathBuf, cache: PathBuf, data: PathBuf) -> Self {
+        Self {
+            config_dir: config.join("zm"),
             cache_dir: cache.join("zm-linux"),
             data_dir: data.join("zm-linux"),
             log_dir: data.join("zm-linux/logs"),
-        })
+        }
     }
     pub fn ensure(&self) -> Result<()> {
-        for path in [
-            &self.config_dir,
-            &self.cache_dir,
-            &self.data_dir,
-            &self.log_dir,
-        ] {
+        crate::private_file::ensure_private_dir(&self.config_dir)
+            .map_err(|error| ZmError::io(&self.config_dir, error))?;
+        for path in [&self.cache_dir, &self.data_dir, &self.log_dir] {
             std::fs::create_dir_all(path).map_err(|e| ZmError::io(path, e))?;
         }
         Ok(())
     }
     pub fn config_file(&self) -> PathBuf {
         self.config_dir.join("config.toml")
+    }
+
+    pub fn credentials_file(&self) -> PathBuf {
+        self.config_dir.join("credentials.toml")
+    }
+
+    pub fn legacy_config_file(&self) -> PathBuf {
+        self.config_dir
+            .with_file_name("zm-linux")
+            .join("config.toml")
     }
 }
 
@@ -64,10 +75,37 @@ fn writable_xdg_dir(variable: &str, home_suffix: &str) -> Option<PathBuf> {
     configured.or_else(|| dirs::home_dir().map(|home| home.join(home_suffix)))
 }
 
-#[cfg(all(test, target_os = "linux"))]
+#[cfg(test)]
 mod tests {
-    use super::writable_xdg_dir;
+    use super::*;
 
+    #[test]
+    fn portable_config_uses_zm_and_preserves_game_data_locations() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_roots(
+            root.path().join("config"),
+            root.path().join("cache"),
+            root.path().join("data"),
+        );
+        assert_eq!(
+            paths.config_file(),
+            root.path().join("config/zm/config.toml")
+        );
+        assert_eq!(
+            paths.credentials_file(),
+            root.path().join("config/zm/credentials.toml")
+        );
+        assert_eq!(
+            paths.legacy_config_file(),
+            root.path().join("config/zm-linux/config.toml")
+        );
+        assert_eq!(paths.cache_dir, root.path().join("cache/zm-linux"));
+        assert_eq!(paths.data_dir, root.path().join("data/zm-linux"));
+        paths.ensure().unwrap();
+        assert!(paths.log_dir.is_dir());
+    }
+
+    #[cfg(target_os = "linux")]
     #[test]
     fn xdg_path_is_absolute() {
         assert!(writable_xdg_dir("XDG_CONFIG_HOME", ".config").is_some_and(|p| p.is_absolute()));

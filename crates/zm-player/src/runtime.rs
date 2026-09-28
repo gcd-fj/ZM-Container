@@ -208,6 +208,7 @@ struct EmbeddedSession {
 struct EguiTextureTarget {
     size: wgpu::Extent3d,
     texture: wgpu::Texture,
+    view: wgpu::TextureView,
 }
 
 #[derive(Debug)]
@@ -232,7 +233,12 @@ impl EguiTextureTarget {
                 | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[wgpu::TextureFormat::Rgba8Unorm],
         });
-        Self { size, texture }
+        let view = texture.create_view(&Default::default());
+        Self {
+            size,
+            texture,
+            view,
+        }
     }
 
     fn texture(&self) -> wgpu::Texture {
@@ -270,9 +276,7 @@ impl RenderTarget for EguiTextureTarget {
     }
 
     fn get_next_texture(&mut self) -> std::result::Result<Self::Frame, wgpu::SurfaceError> {
-        Ok(EguiTextureFrame(
-            self.texture.create_view(&Default::default()),
-        ))
+        Ok(EguiTextureFrame(self.view.clone()))
     }
 
     fn submit<I: IntoIterator<Item = wgpu::CommandBuffer>>(
@@ -300,7 +304,7 @@ pub struct GameRuntime {
     descriptors_created: u64,
     descriptors_reused: u64,
     session: Option<EmbeddedSession>,
-    traces: Arc<Mutex<VecDeque<String>>>,
+    traces: Arc<Mutex<crate::trace_buffer::TraceBuffer>>,
     secrets: Arc<Mutex<Vec<String>>>,
     last_error: Option<String>,
     volume: f32,
@@ -331,7 +335,7 @@ impl GameRuntime {
             descriptors_created: 0,
             descriptors_reused: 0,
             session: None,
-            traces: Arc::new(Mutex::new(VecDeque::with_capacity(160))),
+            traces: Arc::new(Mutex::new(crate::trace_buffer::TraceBuffer::default())),
             secrets: Arc::new(Mutex::new(Vec::new())),
             last_error: None,
             volume: 1.0,
@@ -354,7 +358,7 @@ impl GameRuntime {
             sender: self.events.clone(),
         };
         // 每次启动独立统计，避免切换造四/造五后把两款游戏的证据混在一起。
-        self.traces = Arc::new(Mutex::new(VecDeque::with_capacity(160)));
+        self.traces = Arc::new(Mutex::new(crate::trace_buffer::TraceBuffer::default()));
         self.secrets = Arc::new(Mutex::new(Vec::new()));
         self.resource_metrics = Arc::new(ResourceMetrics::default());
         self.compatibility_metrics = Arc::new(CompatibilityMetrics::default());
@@ -689,7 +693,7 @@ impl GameRuntime {
 
     pub fn diagnostics(&self) -> String {
         let mut output = format!(
-            "ZM-LINUX={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1\nMode=embedded\nVolume={:.2}\n",
+            "ZM-LINUX={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1,json-owned-tree-v1,data-phase-trace-v1\nMode=embedded\nVolume={:.2}\n",
             env!("CARGO_PKG_VERSION"),
             RUFFLE_REVISION,
             self.volume
@@ -738,10 +742,7 @@ impl GameRuntime {
         output.push_str(&self.resource_metrics.summary());
         output.push_str(&self.compatibility_metrics.summary());
         output.push_str("Recent sanitized AVM log:\n");
-        for line in self.traces.lock().unwrap().iter().rev().take(40).rev() {
-            output.push_str(line);
-            output.push('\n');
-        }
+        output.push_str(&self.traces.lock().unwrap().summary(40));
         redact(&output, &self.secrets)
     }
 }
@@ -936,6 +937,31 @@ mod tests {
             redact(message, &secrets),
             "接受数据来自平台的token:<redacted>"
         );
+    }
+
+    #[test]
+    fn folded_traces_keep_redaction_and_count_every_compatibility_event() {
+        use ruffle_core::backend::log::LogBackend;
+        let (sender, _receiver) = std::sync::mpsc::channel();
+        let traces = Arc::new(Mutex::new(crate::trace_buffer::TraceBuffer::default()));
+        let compatibility = Arc::new(CompatibilityMetrics::default());
+        let log = RedactingLogBackend {
+            events: RuntimeEventSender {
+                session_id: 1,
+                sender,
+            },
+            traces: traces.clone(),
+            secrets: Arc::new(Mutex::new(vec!["test-secret".into()])),
+            compatibility: compatibility.clone(),
+        };
+        for _ in 0..256 {
+            log.avm_trace("ResourceLoadComplete token=test-secret");
+        }
+        let summary = traces.lock().unwrap().summary(40);
+        assert!(summary.contains("token=<redacted>"));
+        assert!(summary.contains("occurrences=256"));
+        assert!(!summary.contains("test-secret"));
+        assert!(compatibility.summary().contains("module_complete=256"));
     }
 
     #[test]

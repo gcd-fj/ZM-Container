@@ -104,7 +104,13 @@ impl ResourceMetrics {
         }
     }
 
-    pub(crate) fn record_success(&self, resource: &str, cache_hit: bool, elapsed: Duration) {
+    pub(crate) fn record_success(
+        &self,
+        resource: &str,
+        bytes: &[u8],
+        cache_hit: bool,
+        elapsed: Duration,
+    ) {
         let counter = if cache_hit {
             &self.cache_hits
         } else {
@@ -119,7 +125,8 @@ impl ResourceMetrics {
         };
         total.fetch_add(elapsed_micros, std::sync::atomic::Ordering::Relaxed);
         peak.fetch_max(elapsed_micros, std::sync::atomic::Ordering::Relaxed);
-        if resource.to_ascii_lowercase().ends_with(".swf") {
+        // Some official .swf URLs carry serialized configuration, not movies.
+        if matches!(bytes.get(..3), Some(b"FWS" | b"CWS" | b"ZWS")) {
             self.dynamic_modules
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -480,7 +487,7 @@ impl CompatibilityMetrics {
 
 pub(crate) struct RedactingLogBackend {
     pub(crate) events: RuntimeEventSender,
-    pub(crate) traces: Arc<Mutex<VecDeque<String>>>,
+    pub(crate) traces: Arc<Mutex<crate::trace_buffer::TraceBuffer>>,
     pub(crate) secrets: Arc<Mutex<Vec<String>>>,
     pub(crate) compatibility: Arc<CompatibilityMetrics>,
 }
@@ -506,12 +513,10 @@ impl RedactingLogBackend {
         register_dynamic_token(message, &self.secrets);
         self.compatibility.record(message);
         let line = format!("{level}: {}", redact(message, &self.secrets));
-        tracing::info!(target: "zm_swf", "{line}");
-        let mut traces = self.traces.lock().unwrap();
-        if traces.len() >= 160 {
-            traces.pop_front();
+        let emitted = self.traces.lock().unwrap().record(line, level == "trace");
+        if let Some(line) = emitted {
+            tracing::info!(target: "zm_swf", "{line}");
         }
-        traces.push_back(line);
     }
 }
 
@@ -566,6 +571,7 @@ mod tests {
         let metrics = ResourceMetrics::default();
         metrics.record_success(
             "assets/private.swf?token=secret",
+            b"CWSfixture",
             true,
             Duration::from_millis(5),
         );
@@ -576,6 +582,24 @@ mod tests {
         assert!(!summary.contains("secret"));
         assert!(!summary.contains("payload"));
         assert!(metrics.summary().contains("Resource: "));
+    }
+
+    #[test]
+    fn movie_counter_sniffs_content_instead_of_the_resource_extension() {
+        let metrics = ResourceMetrics::default();
+        metrics.record_success(
+            "assets/config.swf",
+            &[0x0a, 0x0b, 0x01],
+            false,
+            Duration::ZERO,
+        );
+        metrics.record_success("assets/movie.bin", b"FWSfixture", true, Duration::ZERO);
+        metrics.record_success("assets/empty.swf", b"", true, Duration::ZERO);
+        assert!(
+            metrics
+                .summary()
+                .contains("cache_hits=2 downloads=1 failures=0 dynamic_swf_ready=1")
+        );
     }
 
     #[test]

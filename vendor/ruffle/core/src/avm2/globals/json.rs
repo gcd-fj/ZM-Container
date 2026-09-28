@@ -33,9 +33,11 @@ fn deserialize_json_inner<'gc>(
         }
         JsonValue::Object(js_obj) => {
             let obj = ScriptObject::new_object(activation.context);
-            for entry in js_obj.iter() {
-                let key = AvmString::new_utf8(activation.gc(), entry.0);
-                let val = deserialize_json_inner(activation, entry.1.clone(), reviver)?;
+            // Consume the parsed tree: cloning each child here copies its entire
+            // subtree again at every nesting level before allocating AVM objects.
+            for (name, value) in js_obj {
+                let key = AvmString::new_utf8(activation.gc(), name);
+                let val = deserialize_json_inner(activation, value, reviver)?;
                 let args = &[key.into(), val];
 
                 let mapped_val = match reviver {
@@ -55,10 +57,10 @@ fn deserialize_json_inner<'gc>(
         }
         JsonValue::Array(js_arr) => {
             let storage = js_arr
-                .iter()
+                .into_iter()
                 .enumerate()
                 .map(|(key, val)| {
-                    let val = deserialize_json_inner(activation, val.clone(), reviver)?;
+                    let val = deserialize_json_inner(activation, val, reviver)?;
                     let args = &[Value::from_usize_lossy(key), val];
 
                     match reviver {
@@ -74,6 +76,91 @@ fn deserialize_json_inner<'gc>(
             array.into()
         }
     })
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+    use crate::PlayerBuilder;
+    use std::{hint::black_box, time::Instant};
+
+    // Pre-optimization path, restricted to the no-reviver workload benchmarked
+    // here. Kept independent so the measured baseline cannot silently change.
+    fn clone_baseline<'gc>(
+        activation: &mut Activation<'_, 'gc>,
+        json: JsonValue,
+    ) -> Result<Value<'gc>, Error<'gc>> {
+        match json {
+            JsonValue::Object(entries) => {
+                let object = ScriptObject::new_object(activation.context);
+                for (name, child) in &entries {
+                    let name = AvmString::new_utf8(activation.gc(), name);
+                    let value = clone_baseline(activation, child.clone())?;
+                    object.set_dynamic_property(name, value, activation.gc());
+                }
+                Ok(object.into())
+            }
+            JsonValue::Array(entries) => {
+                let storage = entries
+                    .iter()
+                    .map(|child| clone_baseline(activation, child.clone()))
+                    .collect::<Result<ArrayStorage<'gc>, Error<'gc>>>()?;
+                Ok(ArrayObject::from_storage(activation.context, storage).into())
+            }
+            scalar => deserialize_json_inner(activation, scalar, None),
+        }
+    }
+
+    #[test]
+    #[ignore = "synthetic allocation benchmark; run in release mode with --nocapture"]
+    fn profile_json_deserialization() {
+        let mut tree =
+            serde_json::json!({"time":1788615600000_u64,"text":"配置内容","enabled":true});
+        for _ in 0..24 {
+            tree = serde_json::json!({"child":[tree],"items":[1,2,3,null]});
+        }
+        let input = JsonValue::Array(vec![tree; 100]);
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for round in 0..7 {
+            for baseline in if round % 2 == 0 {
+                [true, false]
+            } else {
+                [false, true]
+            } {
+                let player = PlayerBuilder::new().build();
+                let input = input.clone(); // Input preparation is outside timing for both paths.
+                player
+                    .lock()
+                    .unwrap()
+                    .mutate_with_update_context(|context| {
+                        let mut activation = Activation::from_nothing(context);
+                        let started = Instant::now();
+                        let value = if baseline {
+                            clone_baseline(&mut activation, input)
+                        } else {
+                            deserialize_json_inner(&mut activation, input, None)
+                        }
+                        .unwrap();
+                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                        black_box(value);
+                        if baseline {
+                            before.push(elapsed);
+                        } else {
+                            after.push(elapsed);
+                        }
+                    });
+            }
+        }
+        before.sort_by(f64::total_cmp);
+        after.sort_by(f64::total_cmp);
+        println!(
+            "Synthetic JSON tree, 7 alternating rounds: clone_median_ms={:.3} consume_median_ms={:.3} ratio={:.3}",
+            before[3],
+            after[3],
+            after[3] / before[3]
+        );
+    }
 }
 
 fn deserialize_json<'gc>(
@@ -286,13 +373,17 @@ pub fn parse<'gc>(
 
     let reviver = args.try_get_function(1);
 
-    let parsed = if let Ok(parsed) = serde_json::from_str(&input.to_utf8_lossy()) {
+    let parsed = if let Ok(parsed) = crate::player::measure_slow_phase("json_decode", || {
+        serde_json::from_str(&input.to_utf8_lossy())
+    }) {
         parsed
     } else {
         return Err(make_error_1132(activation));
     };
 
-    deserialize_json(activation, parsed, reviver)
+    crate::player::measure_slow_phase("json_objects", || {
+        deserialize_json(activation, parsed, reviver)
+    })
 }
 
 /// Implements `JSON.stringify`.

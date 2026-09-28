@@ -1,8 +1,10 @@
+mod background;
 mod diagnostics;
 mod input;
 mod navigator;
 mod runtime;
 mod task_diagnostics;
+mod trace_buffer;
 mod ui_backend;
 
 pub use diagnostics::ResourceLoadingProgress;

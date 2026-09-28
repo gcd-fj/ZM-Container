@@ -124,7 +124,8 @@ impl ZmApp {
         );
         configure_ui(&cc.egui_ctx, &fonts);
         let app_icon = load_icon_texture(&cc.egui_ctx);
-        let config_store = ConfigStore::new(paths.config_file());
+        let config_store =
+            ConfigStore::new(paths.config_file()).with_legacy_path(paths.legacy_config_file());
         let (config, config_error) = match config_store.load() {
             Ok(config) => (config, None),
             Err(error) => (
@@ -160,11 +161,11 @@ impl ZmApp {
             .map(AccountMode::Saved)
             .unwrap_or(AccountMode::New);
         let mut app = Self {
+            credentials: CredentialService::new(rt.handle(), paths.credentials_file()),
             paths,
             config_store,
             config,
             config_writable: config_error.is_none(),
-            credentials: CredentialService::new(rt.handle()),
             rt,
             auth,
             assets,
@@ -246,7 +247,11 @@ impl ZmApp {
                 self.save_password = saved.remember_password;
                 let request_id = self.credential_request_id;
                 self.credential_state = CredentialState::Loading { request_id };
-                let reply = self.credentials.load(&saved.credential_id, &saved.account);
+                let reply = self.credentials.load(
+                    &saved.credential_id,
+                    &saved.account,
+                    saved.remember_password,
+                );
                 let tx = self.tx.clone();
                 self.rt.spawn(async move {
                     let password = receive_credential(reply).await;
@@ -408,7 +413,7 @@ impl ZmApp {
                                     self.rt.spawn(async move {
                                         if let Err(error) = receive_credential(reply).await {
                                             let _ = tx.send(AppMessage::Notice(format!(
-                                                "凭据操作失败，系统存储状态未更新：{error}"
+                                                "本地密码文件更新失败：{error}"
                                             )));
                                         }
                                     });
@@ -748,6 +753,12 @@ impl eframe::App for ZmApp {
         self.launch.cancel();
         self.player.stop();
         let _ = self.save_config();
+        if let Err(error) = self
+            .rt
+            .block_on(receive_credential(self.credentials.flush()))
+        {
+            tracing::warn!("退出时等待本地密码写入失败：{error}");
+        }
     }
 }
 

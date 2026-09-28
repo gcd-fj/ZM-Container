@@ -9,3 +9,4 @@
 /assets/bridge/ZmLinuxHost.abc
 /assets/bridge/ZmLinuxHost.swf
 /assets/bridge/stubs/*.abc
+__pycache__/

@@ -1,6 +1,43 @@
 use super::*;
 
 impl ZmApp {
+    pub(super) fn update_remember_password(&mut self) {
+        let AccountMode::Saved(id) = self.account_mode else {
+            return;
+        };
+        let Some(index) = self.config.accounts.iter().position(|entry| entry.id == id) else {
+            return;
+        };
+        let previous = self.config.accounts[index].remember_password;
+        self.config.accounts[index].remember_password = self.save_password;
+        if let Err(error) = self.save_config() {
+            self.config.accounts[index].remember_password = previous;
+            self.save_password = previous;
+            self.status = format!("保存密码偏好失败：{error}");
+            return;
+        }
+        let account = &self.config.accounts[index];
+        let reply = if !self.save_password {
+            self.credentials
+                .forget(&account.credential_id, &account.account)
+        } else if !self.password.is_empty() {
+            self.credentials.save(
+                &account.credential_id,
+                &account.account,
+                &self.password,
+                true,
+            )
+        } else {
+            return;
+        };
+        let tx = self.tx.clone();
+        self.rt.spawn(async move {
+            if let Err(error) = receive_credential(reply).await {
+                let _ = tx.send(AppMessage::Notice(format!("本地密码文件更新失败：{error}")));
+            }
+        });
+    }
+
     pub(super) fn add_managed_account(&mut self) {
         let account_name = self.manager_account.trim().to_owned();
         if account_name.is_empty() || self.manager_password.is_empty() {
@@ -25,7 +62,7 @@ impl ZmApp {
         let mut account = AccountConfig::new(&account_name);
         account.remember_password = self.manager_save_password;
         let password = self.manager_password.clone();
-        let save_to_keyring = self.manager_save_password;
+        let remember_password = self.manager_save_password;
         let previous_last_account = self.config.last_account;
         self.config.accounts.push(account.clone());
         self.config.last_account = Some(account.id);
@@ -40,14 +77,12 @@ impl ZmApp {
             &account.credential_id,
             &account.account,
             &password,
-            save_to_keyring,
+            remember_password,
         );
         let tx = self.tx.clone();
         self.rt.spawn(async move {
             if let Err(error) = receive_credential(reply).await {
-                let _ = tx.send(AppMessage::Notice(format!(
-                    "凭据操作失败，系统存储状态未更新：{error}"
-                )));
+                let _ = tx.send(AppMessage::Notice(format!("本地密码文件更新失败：{error}")));
             }
         });
 
@@ -56,7 +91,7 @@ impl ZmApp {
         self.account = account_name;
         self.password.clone_from(&self.manager_password);
         self.credential_state = CredentialState::Available;
-        self.save_password = save_to_keyring;
+        self.save_password = remember_password;
         self.manager_account.clear();
         self.manager_password.clear();
         self.account_picker_open = false;
@@ -85,7 +120,7 @@ impl ZmApp {
         self.rt.spawn(async move {
             if let Err(error) = receive_credential(reply).await {
                 let _ = tx.send(AppMessage::Notice(format!(
-                    "账号记录已删除，但系统凭据删除失败：{error}"
+                    "账号记录已删除，但本地密码删除失败：{error}"
                 )));
             }
         });

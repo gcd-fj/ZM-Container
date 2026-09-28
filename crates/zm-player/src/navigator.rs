@@ -139,12 +139,29 @@ impl<N: NavigatorBackend> NavigatorBackend for ZmNavigator<N> {
                 crate::task_diagnostics::mark_static_resource(&resource);
                 let started = Instant::now();
                 let activity = metrics.begin_load();
-                match assets
-                    .fetch_resource_with_progress(game, &resource, activity.observer())
-                    .await
-                {
+                let progress = activity.observer();
+                let worker_resource = resource.clone();
+                // These Send futures include HTTP body decompression and copies.
+                // Poll them on Tokio workers; only delivery/AVM callbacks stay local.
+                let loaded = crate::background::run(async move {
+                    assets
+                        .fetch_resource_with_progress(game, &worker_resource, progress)
+                        .await
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(zm_core::ZmError::Runtime(format!(
+                        "资源后台任务失败：{error}"
+                    )))
+                });
+                match loaded {
                     Ok(asset) => {
-                        metrics.record_success(&resource, asset.cache_hit, started.elapsed());
+                        metrics.record_success(
+                            &resource,
+                            &asset.bytes,
+                            asset.cache_hit,
+                            started.elapsed(),
+                        );
                         let _ = events.send(RuntimeEvent::ResourceLoaded {
                             resource: resource.clone(),
                             cache_hit: asset.cache_hit,

@@ -84,7 +84,7 @@ use web_time::Instant;
 /// Phases can nest (for example preload runs actions), so durations must not
 /// be added together or interpreted as GPU execution time.
 #[inline]
-fn measure_slow_phase<T>(phase: &'static str, operation: impl FnOnce() -> T) -> T {
+pub(crate) fn measure_slow_phase<T>(phase: &'static str, operation: impl FnOnce() -> T) -> T {
     let started = tracing::enabled!(target: "zm_perf", tracing::Level::INFO)
         .then(Instant::now);
     let result = operation();

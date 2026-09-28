@@ -988,7 +988,7 @@ impl ZmApp {
                 }
                 ui.separator();
                 ui.label(
-                    egui::RichText::new("✓  官方资源 · 独立会话 · 密钥环保护")
+                    egui::RichText::new("✓  官方资源 · 独立会话 · 本地账号管理")
                         .size(12.5)
                         .color(Color32::from_rgb(123, 186, 166)),
                 );
@@ -1154,7 +1154,7 @@ impl ZmApp {
                         .small()
                         .color(palette::ACCENT_HOVER),
                 );
-                self.password_input(ui, "密钥环不可用，请输入密码");
+                self.password_input(ui, "本地密码读取失败，请输入密码");
             }
         }
     }
@@ -1194,7 +1194,7 @@ impl ZmApp {
                     CredentialState::Loading { .. } => {
                         ui.spinner();
                         ui.label(
-                            egui::RichText::new("正在从系统密钥环读取密码…")
+                            egui::RichText::new("正在读取本地密码…")
                                 .size(12.5)
                                 .color(palette::TEXT_SECONDARY),
                         );
@@ -1207,7 +1207,7 @@ impl ZmApp {
                     CredentialState::Available => {
                         ui.label(egui::RichText::new("✓").strong().color(palette::SUCCESS));
                         ui.label(
-                            egui::RichText::new("密码已由系统密钥环保护")
+                            egui::RichText::new("密码已就绪")
                                 .size(12.5)
                                 .color(palette::TEXT_SECONDARY),
                         );
@@ -1215,7 +1215,7 @@ impl ZmApp {
                     CredentialState::Missing => {
                         ui.label(egui::RichText::new("◇").strong().color(presentation.accent));
                         ui.label(
-                            egui::RichText::new("登录后可将密码保存到系统密钥环")
+                            egui::RichText::new("登录后可将密码保存到本地文件")
                                 .size(12.5)
                                 .color(palette::TEXT_SECONDARY),
                         );
@@ -1227,7 +1227,7 @@ impl ZmApp {
                                 .color(palette::ACCENT_HOVER),
                         );
                         ui.label(
-                            egui::RichText::new("系统密钥环暂不可用")
+                            egui::RichText::new("本地密码文件暂不可用")
                                 .size(12.5)
                                 .color(palette::TEXT_SECONDARY),
                         );
@@ -1241,12 +1241,14 @@ impl ZmApp {
                             .color(palette::TEXT_PRIMARY),
                     );
                     ui.label(
-                        egui::RichText::new("下次自动读取")
+                        egui::RichText::new("明文保存在本机")
                             .size(11.5)
                             .color(palette::TEXT_TERTIARY),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        toggle(ui, &mut self.save_password, presentation.accent);
+                        if toggle(ui, &mut self.save_password, presentation.accent).changed() {
+                            self.update_remember_password();
+                        }
                     });
                 });
             });

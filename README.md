@@ -2,7 +2,7 @@
 
 使用 Rust 编写的造梦西游 4 / 5 桌面客户端，采用 egui + 内嵌 Ruffle。游戏资源在启动时从官方地址获取，不随程序分发。
 
-项目参考 [zmBox](https://gitee.com/duskeye/zmBox) 的游戏宿主交互流程，重新设计 Rust 应用结构。目标平台为 Linux 和 Windows；Windows 验证由新增 CI 承担，实际游戏兼容性仍需逐项测试。
+项目参考 [zmBox](https://gitee.com/duskeye/zmBox) 的游戏宿主交互流程，重新设计 Rust 应用结构。目标平台为 Linux x86_64、Windows x86_64 和 macOS Apple 芯片；跨平台构建由 CI 验证，实际游戏兼容性仍需逐项测试。
 
 ## 重构后的结构
 
@@ -11,7 +11,7 @@
 | zm-app | 游戏库首页、账号界面、窗口与事件接入 |
 | zm-launcher | 可取消的启动工作流、状态机、会话隔离 |
 | zm-core | 公共模型、错误、两款游戏的配置 |
-| zm-storage | 配置文件、内存凭据、系统密钥环、平台目录 |
+| zm-storage | TOML 配置、本地密码文件、内存凭据、平台目录 |
 | zm-auth | 4399 登录、验证码与令牌协议 |
 | zm-assets | 版本发现、下载、完整性校验、缓存发布、SWF 桥接补丁 |
 | zm-player | Ruffle 宿主、共享 GPU 渲染、输入、音频与诊断 |
@@ -23,7 +23,7 @@
 需要 Rust 1.95 或更高版本。Ubuntu 开发依赖：
 
 ```bash
-sudo apt install build-essential pkg-config libasound2-dev libudev-dev libfontconfig-dev libdbus-1-dev fonts-noto-cjk
+sudo apt install build-essential pkg-config libasound2-dev libudev-dev libfontconfig-dev fonts-noto-cjk
 cargo run --locked --bin zm-linux
 ```
 
@@ -37,6 +37,8 @@ cargo build --release --locked --bin zm-linux
 分段耗时、空闲 CPU/RSS 采样及两款游戏的性能验收步骤见 [性能采样与验收](docs/PERFORMANCE.md)。诊断中的 `tick_hz` 表示宿主调用播放器的频率，不等同于实际游戏呈现帧率。
 
 Windows 使用 MSVC Rust 工具链及 Visual Studio C++ 构建工具，执行同样的 Cargo 命令，程序为 `target/release/zm-linux.exe`。
+
+macOS 使用 Apple 芯片 Mac、Xcode Command Line Tools 和原生 Rust 工具链。Windows 便携 EXE 压缩包、macOS APP/DMG 的生成命令与签名说明见 [跨平台打包](docs/PACKAGING.md)。
 
 ```bash
 cargo fmt --all -- --check
@@ -57,9 +59,21 @@ cargo test --workspace --locked
 
 ## 数据与缓存
 
-Linux 遵循 XDG：配置在 `~/.config/zm-linux`，缓存在 `~/.cache/zm-linux`，数据与日志在 `~/.local/share/zm-linux`。Windows 使用系统配置、缓存及本地数据目录。
+Linux 配置默认位于 `~/.config/zm/`；设置了有效的 `XDG_CONFIG_HOME` 时使用 `$XDG_CONFIG_HOME/zm/`。Windows 配置位于 `%APPDATA%\zm\`，macOS 位于 `~/Library/Application Support/zm/`。各平台使用相同的文件格式，不依赖系统密钥环。
 
-配置仅保存账号元数据与设置。密码保存在系统密钥环或当前进程内存，Cookie 和 token 仅用于当前会话。配置损坏时保留原文件并禁止本次运行覆盖，需备份修复后重新启动。
+| 文件 | 内容 |
+| --- | --- |
+| `config.toml` | 账号列表、账号标识、记住密码偏好、上次选择和音量 |
+| `credentials.toml` | 勾选“记住密码”的账号及明文密码 |
+| `credentials.lock` | 多进程读写密码文件时使用的锁，无密码内容 |
+
+账号数量少，沿用现有 TOML 格式即可，无需额外数据库。密码文件不是加密保险箱：Linux 目录权限为 `0700`、文件为 `0600`；Windows 使用用户配置目录的访问权限。取消记住密码会删除对应的本地密码记录，并保留本次运行已读取的密码；删除账号同时删除对应凭据。Cookie 和 token 仅用于当前会话，不写入这些文件。
+
+首次启动新版时，若新配置不存在，会自动迁移旧 `zm-linux/config.toml` 中的账号列表和设置，并保留旧文件。旧系统密钥环的密码需要重新输入一次，成功登录后按“记住密码”选项保存到新文件；新版不访问或清除旧密钥环。关闭客户端后，复制 `config.toml` 和 `credentials.toml` 到另一平台的配置目录即可迁移已保存账号，请勿公开密码文件。
+
+文件采用同目录临时文件原子替换；密码文件读写加进程间锁，后台执行，正常退出前等待队列完成。配置或密码文件损坏时会报错并保留原内容，需备份修复后重试；密码解析错误不显示源文件内容。
+
+缓存、游戏存档和日志继续使用原目录：Linux 缓存默认在 `~/.cache/zm-linux`，数据与日志在 `~/.local/share/zm-linux`；Windows 使用原系统缓存及本地数据目录。
 
 主 SWF 按内容哈希发布，清单最后切换。更新失败时可以使用校验通过且匹配当前桥接版本的旧缓存；补丁更新会触发重新下载。运行时资源按版本隔离、合并相同请求。清理资源不会删除新架构数据目录中的游戏 SharedObject，后者按游戏和 UID 分开。
 
@@ -79,7 +93,7 @@ bash tools/build-bridges.sh
 
 安装 `linuxdeploy` 后执行 `./packaging/appimage/build.sh`。产物位于 `dist/`，包含程序及校验文件，不捆绑游戏资源。
 
-预编译安装包可从 [GitHub Releases](https://github.com/gcd-fj/ZM-LINUX/releases) 下载。推送 `v` 开头的版本标签（例如 `v0.1.1`）后，CI 会在 Linux / Windows 检查通过后构建 AppImage，并将安装包和 SHA256 校验文件发布到对应的 GitHub Release。
+推送与工作区版本一致的 `v` 标签后，CI 会在 Linux / Windows / macOS Apple Silicon 检查通过后，将 AppImage、Windows EXE 压缩包、macOS DMG 和 SHA256 校验文件统一发布到 [GitHub Releases](https://github.com/gcd-fj/ZM-LINUX/releases)。也可在 Actions 中手动运行 CI，仅生成测试下载产物。未配置发行签名时 Windows、macOS 安装包可能出现系统信任提示，详情见 [打包说明](docs/PACKAGING.md)。
 
 ## 许可
 

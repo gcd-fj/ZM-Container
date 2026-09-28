@@ -4,7 +4,7 @@ exclude = ["vendor/ruffle/core"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 license = "MIT"
 rust-version = "1.95"
@@ -24,7 +24,6 @@ egui-wgpu = "=0.33.3"
 encoding_rs = "0.8.35"
 fontdb = "0.23"
 flate2 = "1.1.9"
-keyring = { version = "4.1.6", default-features = true }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 md-5 = "0.10.6"
 lzma-rs = "0.3.0"

@@ -768,7 +768,9 @@ pub fn uncompress<'gc>(
             Some(algorithm) => algorithm,
             None => return Err(make_error_2058(activation)),
         };
-        let buffer = match bytearray.decompress(algorithm) {
+        let buffer = match crate::player::measure_slow_phase("bytearray_decompress", || {
+            bytearray.decompress(algorithm)
+        }) {
             Some(buffer) => buffer,
             None => return Err(make_error_2058(activation)),
         };
@@ -797,22 +799,28 @@ pub fn read_object<'gc>(
         let (bytes_left, value) = match bytearray.object_encoding() {
             ObjectEncoding::Amf0 => {
                 let mut decoder = AMF0Decoder::default();
-                let (extra, amf) = decoder
-                    .parse_single_element(bytes)
-                    .map_err(|_| "Error: Invalid object")?;
+                let (extra, amf) = crate::player::measure_slow_phase("amf0_decode", || {
+                    decoder.parse_single_element(bytes)
+                })
+                .map_err(|_| "Error: Invalid object")?;
                 (
                     extra.len(),
-                    crate::avm2::amf::deserialize_value(activation, &amf)?,
+                    crate::player::measure_slow_phase("amf0_objects", || {
+                        crate::avm2::amf::deserialize_value(activation, &amf)
+                    })?,
                 )
             }
             ObjectEncoding::Amf3 => {
                 let mut decoder = AMF3Decoder::default();
-                let (extra, amf) = decoder
-                    .parse_single_element(bytes)
-                    .map_err(|_| "Error: Invalid object")?;
+                let (extra, amf) = crate::player::measure_slow_phase("amf3_decode", || {
+                    decoder.parse_single_element(bytes)
+                })
+                .map_err(|_| "Error: Invalid object")?;
                 (
                     extra.len(),
-                    crate::avm2::amf::deserialize_value(activation, &amf)?,
+                    crate::player::measure_slow_phase("amf3_objects", || {
+                        crate::avm2::amf::deserialize_value(activation, &amf)
+                    })?,
                 )
             }
         };

@@ -24,6 +24,28 @@ package {
                     return;
                 }
             }
+            var calls:Array = [];
+            var nested:Object = JSON.parse('{"outer":[{"keep":7,"drop":1},null,"中文"],"flag":true}',
+                function(key:*, value:*):* {
+                    calls.push(String(key));
+                    if (key === "drop") return undefined;
+                    if (key === "keep") return value + 1;
+                    return value;
+                });
+            if (nested.outer[0].keep !== 8 || nested.outer[0].hasOwnProperty("drop") ||
+                nested.outer[1] !== null || nested.outer[2] !== "中文" || nested.flag !== true ||
+                calls.join(",") !== "keep,drop,0,1,2,outer,flag,") {
+                trace("JSON_NESTED_REVIVER_FAIL");
+                return;
+            }
+            var deep:String = '{"value":1788615600000}';
+            for (var i:int = 0; i < 48; i++) deep = '{"child":[' + deep + ']}';
+            var node:Object = JSON.parse(deep);
+            for (i = 0; i < 48; i++) node = node.child[0];
+            if (node.value !== 1788615600000) {
+                trace("JSON_DEEP_TREE_FAIL");
+                return;
+            }
             trace("JSON_NUMBERS_OK");
         }
     }
