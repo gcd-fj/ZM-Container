@@ -119,6 +119,9 @@ class PackagingTests(unittest.TestCase):
 
         def fake_run(*args, **kwargs):
             calls.append(tuple(map(str, args)))
+            if args[0] == "lipo":
+                # -verify_arch consumes the remaining arguments as architectures.
+                self.assertEqual(args, ("lipo", binary, "-verify_arch", "arm64"))
             if args[:2] == ("hdiutil", "create"):
                 Path(args[-1]).write_bytes(b"fixture-dmg")
             return ""

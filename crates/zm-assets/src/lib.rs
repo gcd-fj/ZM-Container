@@ -869,8 +869,8 @@ mod tests {
     use std::{
         collections::VecDeque,
         future::Future,
-        io::{Read, Write},
-        net::TcpListener,
+        io::{self, Read, Write},
+        net::{TcpListener, TcpStream},
         sync::atomic::{AtomicBool, AtomicUsize, Ordering},
         task::Poll,
     };
@@ -890,6 +890,28 @@ mod tests {
         requests: Arc<AtomicUsize>,
         stop: Arc<AtomicBool>,
         worker: Option<std::thread::JoinHandle<()>>,
+    }
+
+    fn read_http_request(stream: &mut TcpStream) -> io::Result<()> {
+        // Winsock accept inherits the listener's nonblocking mode. Wait for
+        // the full request before replying, otherwise closing with unread
+        // input can reset the connection and look like a retryable failure.
+        stream.set_nonblocking(false)?;
+        stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        while request.len() < 16 * 1024 {
+            match stream.read(&mut buffer) {
+                Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
+                Ok(length) => request.extend_from_slice(&buffer[..length]),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(error),
+            }
+            if request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                return Ok(());
+            }
+        }
+        Err(io::ErrorKind::InvalidData.into())
     }
 
     impl LocalHttpServer {
@@ -913,20 +935,12 @@ mod tests {
                         Err(error) => panic!("local HTTP accept failed: {error}"),
                     };
                     stream
-                        .set_read_timeout(Some(Duration::from_secs(2)))
-                        .unwrap();
-                    stream
                         .set_write_timeout(Some(Duration::from_secs(2)))
                         .unwrap();
-                    let mut request = Vec::new();
-                    let mut buffer = [0_u8; 1024];
-                    while request.len() < 16 * 1024
-                        && !request.windows(4).any(|bytes| bytes == b"\r\n\r\n")
-                    {
-                        match stream.read(&mut buffer) {
-                            Ok(0) | Err(_) => break,
-                            Ok(length) => request.extend_from_slice(&buffer[..length]),
-                        }
+                    if read_http_request(&mut stream).is_err() {
+                        // An abandoned connection is not an HTTP request and
+                        // must not consume the next scripted response.
+                        continue;
                     }
                     worker_requests.fetch_add(1, Ordering::SeqCst);
                     let reply = replies
@@ -998,6 +1012,56 @@ mod tests {
                 let _ = worker.join();
             }
         }
+    }
+
+    #[test]
+    fn http_fixture_waits_for_complete_headers_on_nonblocking_connections() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        // Reproduce Windows' inherited mode on every test platform.
+        stream.set_nonblocking(true).unwrap();
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n")
+            .unwrap();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            ready_tx.send(()).unwrap();
+            let _ = done_tx.send(read_http_request(&mut stream));
+        });
+        ready_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_millis(100)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        client.write_all(b"\r\n").unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap();
+        worker.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn http_fixture_does_not_consume_a_reply_for_an_abandoned_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let server = LocalHttpServer::new([HttpReply::Status(200, b"expected")]);
+        let mut client = TcpStream::connect(server.root.socket_addrs(|| None).unwrap()[0]).unwrap();
+        client.write_all(b"GET / HTTP/1.1\r\n").unwrap();
+        client.shutdown(std::net::Shutdown::Write).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert_eq!(client.read(&mut [0_u8; 1]).unwrap(), 0);
+        assert_eq!(server.requests.load(Ordering::SeqCst), 0);
+        let asset = server
+            .manager(directory.path())
+            .fetch_resource(GameKind::Zm4, "asset.bin")
+            .await
+            .unwrap();
+        assert_eq!(asset.bytes, b"expected");
+        assert_eq!(server.requests.load(Ordering::SeqCst), 1);
     }
 
     type ProgressLog = Arc<StdMutex<Vec<ResourceProgress>>>;

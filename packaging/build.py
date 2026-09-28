@@ -201,7 +201,7 @@ def build_macos(output: Path, skip_build: bool) -> None:
         run("cargo", "build", "--release", "--locked", "--bin", "zm-linux",
             "--target", target, "--target-dir", ROOT / "target", env=env)
     binary = ROOT / "target" / target / "release/zm-linux"
-    run("lipo", "-verify_arch", architecture, binary)
+    run("lipo", binary, "-verify_arch", architecture)
     verify_macos_dependencies(binary)
     work = ROOT / "target/packaging" / f"macos-{architecture}"
     stage = work / "dmg"
