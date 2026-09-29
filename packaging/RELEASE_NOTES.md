@@ -1,5 +1,7 @@
 造梦西游 4 / 5 桌面客户端，使用 Rust、egui 和内嵌 Ruffle。
 
+项目现名 **ZM-Container**（原 ZM-LINUX）。以下下载名称适用于改名后的新构建，历史版本附件保持原文件名。
+
 ## v0.1.2 更新
 
 - 新增 Windows x86_64 便携程序和 macOS Apple Silicon 应用打包，保留 Linux AppImage；macOS 仅支持 Apple 芯片。
@@ -13,9 +15,9 @@
 
 | 系统 | 文件 | 使用方式 |
 | --- | --- | --- |
-| Linux x86_64 | `ZM-LINUX-x86_64.AppImage` | 添加执行权限后启动 |
-| Windows x86_64 | `ZM-LINUX-windows-x86_64.zip` | 解压后双击 `zm-linux.exe` |
-| macOS Apple 芯片 | `ZM-LINUX-macos-arm64.dmg` | 将 `.app` 拖到 Applications |
+| Linux x86_64 | `ZM-Container-x86_64.AppImage` | 添加执行权限后启动 |
+| Windows x86_64 | `ZM-Container-windows-x86_64.zip` | 解压后双击 `zm-container.exe` |
+| macOS Apple 芯片 | `ZM-Container-macos-arm64.dmg` | 将 `.app` 拖到 Applications |
 
 每个文件附带 SHA256 校验文件。Windows 包未进行发行者代码签名；CI 生成的 macOS 包仅有 ad-hoc 签名，未经过 Apple 公证，系统可能阻止直接启动。这些包需要在对应系统上验证登录、画面、音频及游戏运行后再确认兼容性。
 

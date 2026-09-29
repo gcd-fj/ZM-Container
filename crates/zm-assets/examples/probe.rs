@@ -3,7 +3,7 @@ use zm_core::GameKind;
 
 #[tokio::main]
 async fn main() {
-    let cache = std::env::temp_dir().join("zm-linux-probe");
+    let cache = std::env::temp_dir().join("zm-container-probe");
     let manager = OfficialAssetManager::new(cache).expect("create asset manager");
     let download = std::env::args().any(|arg| arg == "--download");
     for game in [GameKind::Zm4, GameKind::Zm5] {

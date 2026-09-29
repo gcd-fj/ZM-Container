@@ -4,11 +4,13 @@
 
 | 平台 | 构建目标 | 发布产物 |
 | --- | --- | --- |
-| Linux x86_64 | `x86_64-unknown-linux-gnu` | `ZM-LINUX-x86_64.AppImage` |
-| Windows x86_64 | `x86_64-pc-windows-msvc` | `ZM-LINUX-windows-x86_64.zip`，内含 `zm-linux.exe` |
-| macOS Apple 芯片 | `aarch64-apple-darwin` | `ZM-LINUX-macos-arm64.dmg`，内含 `ZM-LINUX.app` |
+| Linux x86_64 | `x86_64-unknown-linux-gnu` | `ZM-Container-x86_64.AppImage` |
+| Windows x86_64 | `x86_64-pc-windows-msvc` | `ZM-Container-windows-x86_64.zip`，内含 `zm-container.exe` |
+| macOS Apple 芯片 | `aarch64-apple-darwin` | `ZM-Container-macos-arm64.dmg`，内含 `ZM-Container.app` |
 
 所有发布包附带 `.sha256`。Windows 先采用解压即用的程序，后续有安装目录、快捷方式和卸载器需求时再增加安装程序。macOS 使用标准 `.app` 包装，再放入 DMG 供用户拖入 Applications。
+
+以上名称用于改名后的新构建。已经发布的 v0.1.2 及更早版本仅同步发布标题，附件、校验文件和版本标签保持原样。应用标识仍为 `io.github.gcd-fj.zm-linux`，保证系统识别为原应用的后续版本。
 
 ## GitHub Actions
 
@@ -17,6 +19,8 @@
 - 推送分支或创建 PR：验证三个平台，并上传 Windows、macOS 打包产物。
 - Actions → CI → Run workflow：手动构建三个平台的下载产物，不创建公开 Release。
 - 推送与工作区版本一致的 `v` 标签：三个平台全部通过后，统一校验并上传 GitHub Release，避免多个平台抢先创建同一个 Release。
+
+`Sync release names` 工作流用于将已有发布标题中的旧项目前缀更新为 `ZM-Container`，不修改附件、发布说明或标签；首次加入该工作流时自动运行，也可手动运行。
 
 首次跨平台发布前，先通过手动运行取得测试包，在 Windows 和 Apple 芯片 Mac 上验证登录、中文字体、音频、全屏、账号保存、两款游戏加载和退出。CI 编译通过不代表游戏兼容性全部通过。本地 Linux 环境无法验证 Windows/macOS 的原生 SDK、签名工具和图形运行。
 
@@ -49,7 +53,7 @@ python3 packaging/build.py --platform macos
 
 脚本默认设置 `MACOSX_DEPLOYMENT_TARGET=13.0`；这是构建最低系统目标，实际最低版本兼容性需要对应机器验证。程序使用 wgpu 的 macOS 后端，不需要安装 Wine。打包脚本检查 Mach-O 架构和动态库依赖；若发现 Homebrew 或其他非系统动态库，会停止打包，避免生成只在构建机能运行的应用。
 
-`.app` 包含 `Contents/Info.plist`、`Contents/MacOS/zm-linux` 和图标、许可文件。DMG 生成在 `dist/`，并提供 Applications 入口。配置目录为 `~/Library/Application Support/zm/`，游戏数据和日志仍位于 `dirs` 对应的原 `zm-linux` 数据目录。
+`.app` 包含 `Contents/Info.plist`、`Contents/MacOS/zm-container` 和图标、许可文件。DMG 生成在 `dist/`，并提供 Applications 入口。配置目录为 `~/Library/Application Support/zm/`，游戏数据和日志仍位于 `dirs` 对应的原 `zm-linux` 数据目录。
 
 ### 签名与公证
 

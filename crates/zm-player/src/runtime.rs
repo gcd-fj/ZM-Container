@@ -222,7 +222,7 @@ impl EguiTextureTarget {
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ZM-LINUX embedded game texture"),
+            label: Some("ZM-Container embedded game texture"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -693,7 +693,7 @@ impl GameRuntime {
 
     pub fn diagnostics(&self) -> String {
         let mut output = format!(
-            "ZM-LINUX={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1,json-owned-tree-v1,data-phase-trace-v1\nMode=embedded\nVolume={:.2}\n",
+            "ZM-Container={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1,json-owned-tree-v1,data-phase-trace-v1\nMode=embedded\nVolume={:.2}\n",
             env!("CARGO_PKG_VERSION"),
             RUFFLE_REVISION,
             self.volume

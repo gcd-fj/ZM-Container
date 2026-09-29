@@ -6,7 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "zm-linux"
+name = "zm-container"
 path = "src/main.rs"
 
 [dependencies]

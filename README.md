@@ -1,6 +1,8 @@
-# ZM-LINUX
+# ZM-Container
 
 使用 Rust 编写的造梦西游 4 / 5 桌面客户端，采用 egui + 内嵌 Ruffle。游戏资源在启动时从官方地址获取，不随程序分发。
+
+项目原名 ZM-LINUX，现名 **ZM-Container**，仓库地址为 [gcd-fj/ZM-Container](https://github.com/gcd-fj/ZM-Container)。新构建的可执行程序名为 `zm-container`，Windows 为 `zm-container.exe`；已发布历史版本的附件仍保留原文件名。
 
 项目参考 [zmBox](https://gitee.com/duskeye/zmBox) 的游戏宿主交互流程，重新设计 Rust 应用结构。目标平台为 Linux x86_64、Windows x86_64 和 macOS Apple 芯片；跨平台构建由 CI 验证，实际游戏兼容性仍需逐项测试。
 
@@ -24,19 +26,19 @@
 
 ```bash
 sudo apt install build-essential pkg-config libasound2-dev libudev-dev libfontconfig-dev fonts-noto-cjk
-cargo run --locked --bin zm-linux
+cargo run --locked --bin zm-container
 ```
 
 调试版适合复现功能问题，性能评估请使用优化版：
 
 ```bash
-cargo build --release --locked --bin zm-linux
-./target/release/zm-linux
+cargo build --release --locked --bin zm-container
+./target/release/zm-container
 ```
 
 分段耗时、空闲 CPU/RSS 采样及两款游戏的性能验收步骤见 [性能采样与验收](docs/PERFORMANCE.md)。诊断中的 `tick_hz` 表示宿主调用播放器的频率，不等同于实际游戏呈现帧率。
 
-Windows 使用 MSVC Rust 工具链及 Visual Studio C++ 构建工具，执行同样的 Cargo 命令，程序为 `target/release/zm-linux.exe`。
+Windows 使用 MSVC Rust 工具链及 Visual Studio C++ 构建工具，执行同样的 Cargo 命令，程序为 `target/release/zm-container.exe`。
 
 macOS 使用 Apple 芯片 Mac、Xcode Command Line Tools 和原生 Rust 工具链。Windows 便携 EXE 压缩包、macOS APP/DMG 的生成命令与签名说明见 [跨平台打包](docs/PACKAGING.md)。
 
@@ -75,6 +77,8 @@ Linux 配置默认位于 `~/.config/zm/`；设置了有效的 `XDG_CONFIG_HOME` 
 
 缓存、游戏存档和日志继续使用原目录：Linux 缓存默认在 `~/.cache/zm-linux`，数据与日志在 `~/.local/share/zm-linux`；Windows 使用原系统缓存及本地数据目录。
 
+改名保留应用标识 `io.github.gcd-fj.zm-linux`、原数据目录和游戏桥接标识，确保桌面入口更新、账号、缓存与存档继续兼容。历史性能记录中的旧程序名表示当时实际测量的产物。
+
 主 SWF 按内容哈希发布，清单最后切换。更新失败时可以使用校验通过且匹配当前桥接版本的旧缓存；补丁更新会触发重新下载。运行时资源按版本隔离、合并相同请求。清理资源不会删除新架构数据目录中的游戏 SharedObject，后者按游戏和 UID 分开。
 
 ## 桥接开发
@@ -93,7 +97,7 @@ bash tools/build-bridges.sh
 
 安装 `linuxdeploy` 后执行 `./packaging/appimage/build.sh`。产物位于 `dist/`，包含程序及校验文件，不捆绑游戏资源。
 
-推送与工作区版本一致的 `v` 标签后，CI 会在 Linux / Windows / macOS Apple Silicon 检查通过后，将 AppImage、Windows EXE 压缩包、macOS DMG 和 SHA256 校验文件统一发布到 [GitHub Releases](https://github.com/gcd-fj/ZM-LINUX/releases)。也可在 Actions 中手动运行 CI，仅生成测试下载产物。未配置发行签名时 Windows、macOS 安装包可能出现系统信任提示，详情见 [打包说明](docs/PACKAGING.md)。
+推送与工作区版本一致的 `v` 标签后，CI 会在 Linux / Windows / macOS Apple Silicon 检查通过后，将 AppImage、Windows EXE 压缩包、macOS DMG 和 SHA256 校验文件统一发布到 [GitHub Releases](https://github.com/gcd-fj/ZM-Container/releases)。也可在 Actions 中手动运行 CI，仅生成测试下载产物。未配置发行签名时 Windows、macOS 安装包可能出现系统信任提示，详情见 [打包说明](docs/PACKAGING.md)。
 
 ## 许可
 

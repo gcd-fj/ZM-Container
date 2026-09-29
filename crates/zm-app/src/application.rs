@@ -141,7 +141,7 @@ impl ZmApp {
         let render_state = cc
             .wgpu_render_state
             .clone()
-            .expect("ZM-LINUX需要wgpu渲染后端");
+            .expect("ZM-Container需要wgpu渲染后端");
         let (runtime_tx, runtime_rx) = mpsc::channel();
         let rt = Runtime::new().expect("创建异步运行时失败");
         let mut player = GameRuntime::new(

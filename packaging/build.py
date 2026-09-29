@@ -18,7 +18,8 @@ import tomllib
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_NAME = "ZM-LINUX"
+APP_NAME = "ZM-Container"
+# Keep the macOS bundle identity compatible with existing installations.
 APP_ID = "io.github.gcd-fj.zm-linux"
 WINDOWS_TARGET = "x86_64-pc-windows-msvc"
 MAC_TARGET = "aarch64-apple-darwin"
@@ -101,11 +102,11 @@ BEGIN
   BEGIN
     BLOCK "040904B0"
     BEGIN
-      VALUE "FileDescription", "ZM-LINUX Desktop Client\\0"
+      VALUE "FileDescription", "ZM-Container Desktop Client\\0"
       VALUE "FileVersion", "{app_version}\\0"
-      VALUE "ProductName", "ZM-LINUX\\0"
+      VALUE "ProductName", "ZM-Container\\0"
       VALUE "ProductVersion", "{app_version}\\0"
-      VALUE "OriginalFilename", "zm-linux.exe\\0"
+      VALUE "OriginalFilename", "zm-container.exe\\0"
     END
   END
   BLOCK "VarFileInfo"
@@ -135,7 +136,7 @@ def verify_windows_executable(path: Path) -> None:
 def build_windows(output: Path, skip_build: bool) -> None:
     work = ROOT / "target/packaging/windows-x86_64"
     work.mkdir(parents=True, exist_ok=True)
-    binary = ROOT / "target" / WINDOWS_TARGET / "release/zm-linux.exe"
+    binary = ROOT / "target" / WINDOWS_TARGET / "release/zm-container.exe"
     if not skip_build:
         env = os.environ.copy()
         if env.get("CARGO_ENCODED_RUSTFLAGS"):
@@ -143,7 +144,7 @@ def build_windows(output: Path, skip_build: bool) -> None:
         if "+crt-static" not in env.get("RUSTFLAGS", ""):
             env["RUSTFLAGS"] = env.get("RUSTFLAGS", "") + " -C target-feature=+crt-static"
         env["ZM_WINDOWS_RESOURCE"] = str(windows_resource(work))
-        run("cargo", "build", "--release", "--locked", "--bin", "zm-linux",
+        run("cargo", "build", "--release", "--locked", "--bin", "zm-container",
             "--target", WINDOWS_TARGET, "--target-dir", ROOT / "target", env=env)
     verify_windows_executable(binary)
     dependencies = run(dumpbin_tool(), "/DEPENDENTS", binary, capture=True)
@@ -154,8 +155,8 @@ def build_windows(output: Path, skip_build: bool) -> None:
     if package.exists():
         shutil.rmtree(package)
     copy_notices(package)
-    shutil.copy2(binary, package / "zm-linux.exe")
-    archive = output / "ZM-LINUX-windows-x86_64.zip"
+    shutil.copy2(binary, package / "zm-container.exe")
+    archive = output / "ZM-Container-windows-x86_64.zip"
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as file:
         for path in sorted(package.rglob("*")):
             if path.is_file():
@@ -168,7 +169,7 @@ def mac_plist(app_version: str, minimum: str) -> dict:
     numeric = app_version.split("-", 1)[0].split("+", 1)[0]
     return {
         "CFBundleIdentifier": APP_ID, "CFBundleName": APP_NAME,
-        "CFBundleDisplayName": APP_NAME, "CFBundleExecutable": "zm-linux",
+        "CFBundleDisplayName": APP_NAME, "CFBundleExecutable": "zm-container",
         "CFBundlePackageType": "APPL", "CFBundleInfoDictionaryVersion": "6.0",
         "CFBundleShortVersionString": numeric, "CFBundleVersion": numeric,
         "CFBundleIconFile": "zm.icns", "LSMinimumSystemVersion": minimum,
@@ -198,9 +199,9 @@ def build_macos(output: Path, skip_build: bool) -> None:
     if notary_profile and identity == "-":
         raise RuntimeError("Notarization requires a Developer ID signing identity")
     if not skip_build:
-        run("cargo", "build", "--release", "--locked", "--bin", "zm-linux",
+        run("cargo", "build", "--release", "--locked", "--bin", "zm-container",
             "--target", target, "--target-dir", ROOT / "target", env=env)
-    binary = ROOT / "target" / target / "release/zm-linux"
+    binary = ROOT / "target" / target / "release/zm-container"
     run("lipo", binary, "-verify_arch", architecture)
     verify_macos_dependencies(binary)
     work = ROOT / "target/packaging" / f"macos-{architecture}"
@@ -212,8 +213,8 @@ def build_macos(output: Path, skip_build: bool) -> None:
     (contents / "MacOS").mkdir(parents=True)
     resources = contents / "Resources"
     copy_notices(resources)
-    shutil.copy2(binary, contents / "MacOS/zm-linux")
-    (contents / "MacOS/zm-linux").chmod(0o755)
+    shutil.copy2(binary, contents / "MacOS/zm-container")
+    (contents / "MacOS/zm-container").chmod(0o755)
     shutil.copy2(ROOT / "assets/zm.icns", resources / "zm.icns")
     with (contents / "Info.plist").open("wb") as file:
         plistlib.dump(mac_plist(version(), minimum), file)
@@ -223,7 +224,7 @@ def build_macos(output: Path, skip_build: bool) -> None:
     run("codesign", "--verify", "--strict", "--verbose=2", app)
     (stage / "Applications").symlink_to("/Applications", target_is_directory=True)
     shutil.copy2(ROOT / "packaging/README.txt", stage / "README.txt")
-    image = output / f"ZM-LINUX-macos-{architecture}.dmg"
+    image = output / f"ZM-Container-macos-{architecture}.dmg"
     run("hdiutil", "create", "-ov", "-volname", APP_NAME, "-srcfolder", stage,
         "-format", "UDZO", image)
     if identity != "-":

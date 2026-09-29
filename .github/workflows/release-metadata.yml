@@ -1,0 +1,40 @@
+name: Sync release names
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/release-metadata.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Update the old project name in published release titles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          pages = json.loads(subprocess.check_output([
+              "gh", "api", "--paginate", "--slurp",
+              f"repos/{os.environ['GH_REPO']}/releases?per_page=100",
+          ], text=True))
+          for page in pages:
+              for release in page:
+                  name = release.get("name") or ""
+                  if release["draft"] or not name.startswith("ZM-LINUX "):
+                      continue
+                  title = "ZM-Container " + name.removeprefix("ZM-LINUX ")
+                  subprocess.run([
+                      "gh", "release", "edit", release["tag_name"], "--title", title,
+                  ], check=True)
+                  print(f"{name} -> {title}")
+          PY

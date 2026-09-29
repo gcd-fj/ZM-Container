@@ -62,7 +62,7 @@ jobs:
         run: python3 tools/perf-sample-test.py
       - name: Build Linux executable
         if: runner.os == 'Linux'
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin zm-linux
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin zm-container
       - name: Package Windows executable
         if: runner.os == 'Windows'
         run: python packaging/build.py --platform windows
@@ -84,7 +84,7 @@ jobs:
         with:
           name: linux-release-binary
           if-no-files-found: error
-          path: target/${{ matrix.target }}/release/zm-linux
+          path: target/${{ matrix.target }}/release/zm-container
 
   appimage:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -96,7 +96,7 @@ jobs:
         with:
           name: linux-release-binary
           path: target/release
-      - run: chmod 0755 target/release/zm-linux
+      - run: chmod 0755 target/release/zm-container
       - run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libfontconfig-dev
       - run: curl -L --fail -o /tmp/linuxdeploy.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage && chmod 0755 /tmp/linuxdeploy.AppImage
       - run: SKIP_CARGO_BUILD=1 APPIMAGE_EXTRACT_AND_RUN=1 LINUXDEPLOY=/tmp/linuxdeploy.AppImage ./packaging/appimage/build.sh
@@ -106,8 +106,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           path: |
-            dist/ZM-LINUX-x86_64.AppImage
-            dist/ZM-LINUX-x86_64.AppImage.sha256
+            dist/ZM-Container-x86_64.AppImage
+            dist/ZM-Container-x86_64.AppImage.sha256
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -125,9 +125,9 @@ jobs:
       - name: Verify all release artifacts
         working-directory: dist
         run: |
-          test -f ZM-LINUX-x86_64.AppImage
-          test -f ZM-LINUX-windows-x86_64.zip
-          test -f ZM-LINUX-macos-arm64.dmg
+          test -f ZM-Container-x86_64.AppImage
+          test -f ZM-Container-windows-x86_64.zip
+          test -f ZM-Container-macos-arm64.dmg
           sha256sum --check --strict ./*.sha256
       - name: Publish GitHub Release
         env:
@@ -136,5 +136,5 @@ jobs:
         run: |
           gh release create "$RELEASE_TAG" dist/* \
             --verify-tag \
-            --title "ZM-LINUX $RELEASE_TAG" \
+            --title "ZM-Container $RELEASE_TAG" \
             --notes-file packaging/RELEASE_NOTES.md

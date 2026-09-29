@@ -53,7 +53,7 @@ fn install_at(data_home: &Path, executable: &Path, icon: &[u8]) -> Result<(), St
     fs::create_dir_all(&applications).map_err(|error| format!("创建桌面入口目录失败：{error}"))?;
     let desktop_path = applications.join(format!("{APP_ID}.desktop"));
     let desktop = format!(
-        "[Desktop Entry]\nType=Application\nName=ZM-LINUX\nComment=造梦西游 Linux 原生客户端\nExec={}\nIcon={APP_ID}\nCategories=Game;\nKeywords=造梦西游;西游;Linux;\nStartupWMClass={APP_ID}\nTerminal=false\n",
+        "[Desktop Entry]\nType=Application\nName=ZM-Container\nComment=造梦西游跨平台桌面客户端\nExec={}\nIcon={APP_ID}\nCategories=Game;\nKeywords=造梦西游;西游;Linux;\nStartupWMClass={APP_ID}\nTerminal=false\n",
         quote_exec(executable)
     );
     atomic_write(&desktop_path, desktop.as_bytes())?;

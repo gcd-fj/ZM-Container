@@ -64,22 +64,22 @@ class PackagingTests(unittest.TestCase):
             packaging.verify_windows_executable(path)
 
     def test_windows_zip_contains_executable_and_notices_only(self):
-        binary = self.root / "target" / packaging.WINDOWS_TARGET / "release/zm-linux.exe"
+        binary = self.root / "target" / packaging.WINDOWS_TARGET / "release/zm-container.exe"
         write_pe(binary)
         (self.root / "credentials.toml").write_text("must-not-ship", encoding="utf-8")
         with patch.object(packaging, "dumpbin_tool", return_value=Path("dumpbin.exe")), \
                 patch.object(packaging, "run", return_value="KERNEL32.dll\nUSER32.dll"):
             packaging.build_windows(self.output, skip_build=True)
-        archive = self.output / "ZM-LINUX-windows-x86_64.zip"
+        archive = self.output / "ZM-Container-windows-x86_64.zip"
         with zipfile.ZipFile(archive) as file:
             self.assertEqual(set(file.namelist()), {
-                "ZM-LINUX/zm-linux.exe", "ZM-LINUX/LICENSE", "ZM-LINUX/THIRD_PARTY_LICENSES.md",
-                "ZM-LINUX/RUFFLE-LICENSE.md", "ZM-LINUX/README.txt",
+                "ZM-Container/zm-container.exe", "ZM-Container/LICENSE", "ZM-Container/THIRD_PARTY_LICENSES.md",
+                "ZM-Container/RUFFLE-LICENSE.md", "ZM-Container/README.txt",
             })
-            self.assertEqual(file.read("ZM-LINUX/zm-linux.exe"), binary.read_bytes())
+            self.assertEqual(file.read("ZM-Container/zm-container.exe"), binary.read_bytes())
 
     def test_windows_refuses_to_ship_unbundled_vc_runtime_dependency(self):
-        write_pe(self.root / "target" / packaging.WINDOWS_TARGET / "release/zm-linux.exe")
+        write_pe(self.root / "target" / packaging.WINDOWS_TARGET / "release/zm-container.exe")
         with patch.object(packaging, "dumpbin_tool", return_value=Path("dumpbin.exe")), \
                 patch.object(packaging, "run", return_value="VCRUNTIME140.dll"):
             with self.assertRaisesRegex(RuntimeError, "VC runtime"):
@@ -95,7 +95,7 @@ class PackagingTests(unittest.TestCase):
     def test_mac_plist_is_serializable_with_numeric_prerelease_version(self):
         data = packaging.mac_plist("0.2.3-rc.1", "13.0")
         restored = plistlib.loads(plistlib.dumps(data))
-        self.assertEqual(restored["CFBundleExecutable"], "zm-linux")
+        self.assertEqual(restored["CFBundleExecutable"], "zm-container")
         self.assertEqual(restored["CFBundleVersion"], "0.2.3")
         self.assertEqual(restored["CFBundlePackageType"], "APPL")
 
@@ -112,7 +112,7 @@ class PackagingTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "Creating a macOS Applications symlink needs Windows privileges")
     def test_macos_bundle_layout_and_signing_precede_dmg_creation(self):
-        binary = self.root / "target" / packaging.MAC_TARGET / "release/zm-linux"
+        binary = self.root / "target" / packaging.MAC_TARGET / "release/zm-container"
         binary.parent.mkdir(parents=True)
         binary.write_bytes(b"fixture-binary")
         calls = []
@@ -130,15 +130,15 @@ class PackagingTests(unittest.TestCase):
                 patch.dict(os.environ, {}, clear=True), patch.object(packaging, "run", side_effect=fake_run):
             packaging.build_macos(self.output, skip_build=True)
         stage = self.root / "target/packaging/macos-arm64/dmg"
-        app = stage / "ZM-LINUX.app/Contents"
+        app = stage / "ZM-Container.app/Contents"
         with (app / "Info.plist").open("rb") as file:
             self.assertEqual(plistlib.load(file)["CFBundleIdentifier"], packaging.APP_ID)
-        self.assertEqual((app / "MacOS/zm-linux").read_bytes(), binary.read_bytes())
+        self.assertEqual((app / "MacOS/zm-container").read_bytes(), binary.read_bytes())
         self.assertTrue((stage / "Applications").is_symlink())
         sign_index = next(i for i, call in enumerate(calls) if call[:2] == ("codesign", "--force"))
         dmg_index = next(i for i, call in enumerate(calls) if call[:2] == ("hdiutil", "create"))
         self.assertLess(sign_index, dmg_index)
-        self.assertTrue((self.output / "ZM-LINUX-macos-arm64.dmg.sha256").is_file())
+        self.assertTrue((self.output / "ZM-Container-macos-arm64.dmg.sha256").is_file())
 
 
 if __name__ == "__main__":

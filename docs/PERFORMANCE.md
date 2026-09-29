@@ -29,7 +29,7 @@ Linux 工作区 109 个测试、严格 Clippy、格式与差异检查、release 
 实机复测可以使用以下命令开启每 5 秒一次的性能日志；默认不开启，不额外唤醒页面。停止游戏与关闭窗口时补一份性能记录。定期记录只包含数值指标和游戏种类，不调用 VIP/AVM getter，不包含账号、资源 URL、AVM 日志或错误内容；普通诊断接口继续保留原有脱敏报告。开启采样会增加少量格式化与写日志开销，做性能对照时两边应使用相同设置。
 
 ```bash
-RUST_LOG='warn,zm_player=info,zm_perf=info' ./target/release/zm-linux
+RUST_LOG='warn,zm_player=info,zm_perf=info' ./target/release/zm-container
 ```
 
 用户操作游戏，分析时只读应用日志，并按需用 `tools/perf-sample.py --pid PID` 附加采集进程 CPU/RSS/I/O；不使用到时终止游戏的命令模式。2026-09-14 已有日志中，最慢本地轮询与 `assets/data/cg1_20260907_1.swf` 关联，耗时 1535.75ms；关联并不等于解压本身用了这些时间，还可能包含配置反序列化与游戏回调。新的 HTTP 分阶段计时用于下一轮区分网络和本地处理，不据此宣称资源下载已经提速。
@@ -66,14 +66,14 @@ Linux 自动验证：工作区 **104 个测试通过**（1 个既有合成微基
 
 ## 工具与隔离
 
-工具仅依赖 Linux `/proc` 和 Python 3.11+ 标准库，不执行 shell。每次命令模式运行创建独立的 XDG 配置、缓存、数据和状态目录；不会读取原有的 ZM-LINUX 配置。`--xdg-root` 可复用专门的测试目录以测量热缓存，切勿指向日常用户目录。XDG 隔离不是网络隔离；工具本身不会登录账号，游戏场景需要测试者在独立配置中手动登录。
+工具仅依赖 Linux `/proc` 和 Python 3.11+ 标准库，不执行 shell。每次命令模式运行创建独立的 XDG 配置、缓存、数据和状态目录；不会读取原有的 ZM-Container 配置。`--xdg-root` 可复用专门的测试目录以测量热缓存，切勿指向日常用户目录。XDG 隔离不是网络隔离；工具本身不会登录账号，游戏场景需要测试者在独立配置中手动登录。
 
 ```sh
 # 先记录二进制哈希、工具链、CPU/GPU、显示环境和工作区版本。
-python3 tools/perf-context.py --binary target/release/zm-linux --output target/perf/after/context.json
+python3 tools/perf-context.py --binary target/release/zm-container --output target/perf/after/context.json
 
 # 空闲登录页：预热 10 秒，采样 30 秒；每次使用全新的输出前缀。
-python3 tools/perf-sample.py --output target/perf/after/idle-01 --warmup 10 --duration 30 --interval 0.25 -- target/release/zm-linux
+python3 tools/perf-sample.py --output target/perf/after/idle-01 --warmup 10 --duration 30 --interval 0.25 -- target/release/zm-container
 
 # 游戏场景：手动进入指定场景并预热后，只读附加到已启动进程。
 python3 tools/perf-sample.py --output target/perf/after/zm4-combat-01 --pid 12345 --warmup 0 --duration 60

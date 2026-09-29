@@ -11,6 +11,9 @@ fn main() {
             "invalid Windows resource path"
         );
         println!("cargo:rerun-if-changed={}", resource.display());
-        println!("cargo:rustc-link-arg-bin=zm-linux={}", resource.display());
+        println!(
+            "cargo:rustc-link-arg-bin=zm-container={}",
+            resource.display()
+        );
     }
 }

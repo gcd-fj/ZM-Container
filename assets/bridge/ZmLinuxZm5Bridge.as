@@ -4,7 +4,7 @@ package
    import flash.events.Event;
    import flash.utils.getDefinitionByName;
 
-   /** ZM-LINUX session bridge for the official ZM5 document class. */
+   /** ZM-Container session bridge for the official ZM5 document class. */
    public class ZmLinuxZm5Bridge extends zm5
    {
       private var applied:Boolean = false;

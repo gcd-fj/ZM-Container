@@ -4,7 +4,7 @@ package
    import flash.events.Event;
    import flash.utils.getDefinitionByName;
 
-   /** ZM-LINUX session bridge for the official ZM4 document class. */
+   /** ZM-Container session bridge for the official ZM4 document class. */
    public class ZmLinuxZm4Bridge extends Preload
    {
       private var applied:Boolean = false;

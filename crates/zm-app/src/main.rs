@@ -13,6 +13,7 @@ use eframe::egui;
 use tracing_subscriber::EnvFilter;
 use zm_storage::AppPaths;
 
+// Keep the installed application identity stable across the product rename.
 const APP_ID: &str = "io.github.gcd-fj.zm-linux";
 const APP_ICON_PNG: &[u8] = include_bytes!("../../../assets/io.github.gcd-fj.zm-linux.png");
 
@@ -28,13 +29,13 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1180.0, 760.0])
             .with_min_inner_size([900.0, 620.0])
-            .with_title("ZM-LINUX")
+            .with_title("ZM-Container")
             .with_app_id(APP_ID)
             .with_icon(app_icon()),
         ..Default::default()
     };
     eframe::run_native(
-        "ZM-LINUX",
+        "ZM-Container",
         options,
         Box::new(move |cc| Ok(Box::new(ZmApp::new(cc, paths)))),
     )
@@ -58,7 +59,7 @@ fn load_icon_texture(ctx: &egui::Context) -> egui::TextureHandle {
         .to_rgba8();
     let size = [image.width() as usize, image.height() as usize];
     ctx.load_texture(
-        "zm-linux-app-icon",
+        "zm-container-app-icon",
         egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw()),
         egui::TextureOptions::LINEAR,
     )
@@ -71,7 +72,7 @@ fn init_logging(paths: &AppPaths) -> Option<tracing_appender::non_blocking::Work
     });
     match tracing_appender::rolling::RollingFileAppender::builder()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .filename_prefix("zm-linux")
+        .filename_prefix("zm-container")
         .filename_suffix("log")
         .build(&paths.log_dir)
     {

@@ -237,7 +237,7 @@ impl OfficialAssetManager {
     pub fn new(cache_root: impl Into<PathBuf>) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(45))
-            .user_agent("ZM-LINUX/0.1")
+            .user_agent(concat!("ZM-Container/", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| ZmError::Network(e.to_string()))?;
         Ok(Self {
