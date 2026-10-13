@@ -21,3 +21,6 @@ url.workspace = true
 zm-core = { path = "../zm-core" }
 
 tempfile.workspace = true
+
+[dev-dependencies]
+ruffle-core.workspace = true

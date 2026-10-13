@@ -21,7 +21,7 @@ flowchart TD
 
 - `zm-app` 的入口只负责日志、图标和窗口创建。`application` 负责事件接入和状态投影，`views` 负责界面，`accounts` 负责账号操作，`theme` 负责视觉样式。
 - `zm-launcher` 不依赖 egui / Ruffle。`prepare_launch` 接受 `AuthClient`、`AssetManager` 接口，通过 `LaunchEvent` 交付验证码、阶段变化、启动结果或错误。测试替身不访问真实账号。
-- `zm-core` 不再依赖文件系统配置实现、密钥环或 HTTP 库。`GameKind::profile()` 是资源根地址、桥接类、版本发现目录和服务器的共同来源。
+- `zm-core` 不再依赖文件系统配置实现、密钥环或 HTTP 库。`GameKind::profile()` 是资源根地址、桥接类、版本发现目录、服务器和充值编号的共同来源。
 - `zm-storage` 维护 TOML 配置和本地凭据文件，不依赖系统密钥环。凭据服务通过队列按提交顺序执行保存、读取、删除，防止保存结果晚于删除；文件操作由 `spawn_blocking` 执行。Linux 配置使用 XDG 下的 `zm`，Windows 使用系统配置目录下的 `zm`。
 - `zm-player` 持有游戏实例，在 UI 线程推进 AVM 与渲染。网络使用应用提供的同一个 Tokio runtime handle；不再创建第二个独立 runtime。
 
@@ -48,6 +48,29 @@ flowchart TD
 首次加载缺失的新配置时，验证并迁移同级旧 `zm-linux/config.toml`，保留账号标识和原文件；迁移发布不覆盖另一进程已经创建的新配置。旧系统密码不自动导出，需要重新输入一次；依赖树已移除 keyring 及其各平台存储后端。读取失败不会静默覆盖旧配置；该次运行禁用配置写入，损坏或未知版本的密码文件也拒绝修改。用户名包含 `token` 或 `cookie` 等词仍合法。
 
 游戏 SharedObject 位于应用 **数据目录** 的 `ruffle/shared-objects/<game>/<uid>/`，不随资源清理删除，也不在不同账号之间共享。重构不自动导入旧版共享缓存目录中的 SharedObject。
+
+
+## 充值跳转
+
+`zmLinux.payMoney` 使用当前游戏会话的登录账号名构建官方充值链接：
+`https://cz.4399.com/?ac=paygame&union=<充值编号>&uname=<账号>&je=1`。
+充值编号由 `GameKind::profile().payment_union_id` 提供，造四为 10037
+（洪荒大劫篇），造五为 10049（上古天帝篇）；它们与保存接口的 game ID 不同。
+账号通过 URL 查询参数编码，沿用官方旧跳转的初始金额 1 元。
+
+旧 `save.api.4399.com/exchange/v2/flash/Pay` 跳转在实测中丢弃 `username`
+和用户编号。当前直接访问官方页面；[官方充值页脚本](https://cz.4399.com/static/js/https_pay.js?v=260112)
+读取 `uname` 并作为 `default_uname` 交给 `/initial/loading`，返回的
+`default_uname` / `default_uid` 用于预填两次账号输入和充值对象编号。
+这与浏览器自身的登录会话独立；如果浏览器已登录其他账号，页面仍按链接
+指定的充值对象预填。客户端令牌、Cookie 和密码不加入跳转 URL。
+
+2026-10-14 只读验证：两款游戏的官方初始化接口均能识别当前保存的账号，
+返回的充值对象编号与已知账号 UID 一致。修复后的两款游戏链接直接返回 HTTP 200，保留了游戏和账号参数。验证没有下单或支付。自动回归覆盖
+两款游戏的目标地址、官方参数名称及账号中的特殊字符不会改写充值参数。
+工作区 142 项回归、严格 Clippy、格式和差异检查通过；Linux release 于
+2026-10-14 00:52（UTC+8）构建完成。检查记录位于 `target/perf/payment-*`，
+仅保存测试结果和脱敏的账号匹配布尔值。
 
 ## 资源一致性
 

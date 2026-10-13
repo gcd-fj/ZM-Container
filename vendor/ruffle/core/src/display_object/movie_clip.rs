@@ -1772,23 +1772,13 @@ impl<'gc> MovieClip<'gc> {
                 .filter(|child| !self.survives_rewind(*child, &final_placements, frame))
                 .collect();
 
-            // Remember surviving siblings above replaced timeline objects. A
-            // replacement must not jump above an AS3 addChild overlay on rewind.
+            // Preserve overlay order without searching the removal list and
+            // every following sibling again for each replaced child.
             if self.movie().is_action_script_3() {
-                let render_list: Vec<_> = self.iter_render_list().collect();
-                for (index, child) in render_list.iter().copied().enumerate() {
-                    if !child.placed_by_avm2_script()
-                        && children.iter().any(|c| DisplayObject::ptr_eq(*c, child))
-                        && final_placements.contains_key(&child.depth())
-                        && let Some(anchor) =
-                            render_list[index + 1..].iter().copied().find(|next| {
-                                next.placed_by_avm2_script()
-                                    || !children.iter().any(|c| DisplayObject::ptr_eq(*c, *next))
-                            })
-                    {
-                        rewind_anchors.insert(child.depth(), anchor);
-                    }
-                }
+                rewind_anchors =
+                    crate::player::measure_slow_phase("timeline_rewind_anchors", || {
+                        self.rewind_anchors(&final_placements, frame)
+                    });
             }
             for child in children {
                 if !child.placed_by_avm2_script() {
@@ -1928,6 +1918,29 @@ impl<'gc> MovieClip<'gc> {
         }
 
         self.assert_expected_tag_end(hit_target_frame);
+    }
+
+    fn rewind_anchors(
+        self,
+        final_placements: &HashMap<Depth, &GotoPlaceObject<'_>>,
+        frame: FrameNumber,
+    ) -> HashMap<Depth, DisplayObject<'gc>> {
+        let mut anchors = HashMap::new();
+        let mut next_survivor = None;
+        // The closest surviving sibling above each replacement can be found
+        // in one reverse pass. Script children survive in the render list even
+        // when run_goto removes their association with a timeline depth.
+        for child in self.iter_render_list().rev() {
+            if child.placed_by_avm2_script() || self.survives_rewind(child, final_placements, frame)
+            {
+                next_survivor = Some(child);
+            } else if final_placements.contains_key(&child.depth())
+                && let Some(anchor) = next_survivor
+            {
+                anchors.insert(child.depth(), anchor);
+            }
+        }
+        anchors
     }
 
     fn survives_rewind(
@@ -5038,5 +5051,170 @@ impl ClipEventHandler {
             key_code,
             action_data: SwfSlice::from(movie).to_subslice(swf_action.action_data),
         }
+    }
+}
+
+#[cfg(test)]
+mod rewind_performance_tests {
+    use super::*;
+    use crate::PlayerBuilder;
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    // The former overlay algorithm, retained only as an independent equivalence
+    // oracle and a release-mode benchmark baseline.
+    fn old_anchors<'gc>(
+        clip: MovieClip<'gc>,
+        placements: &HashMap<Depth, &GotoPlaceObject<'_>>,
+    ) -> HashMap<Depth, DisplayObject<'gc>> {
+        let removed: Vec<_> = clip
+            .iter_render_list()
+            .filter(|child| !clip.survives_rewind(*child, placements, 1))
+            .collect();
+        let render_list: Vec<_> = clip.iter_render_list().collect();
+        let mut anchors = HashMap::new();
+        for (index, child) in render_list.iter().copied().enumerate() {
+            if !child.placed_by_avm2_script()
+                && removed.iter().any(|c| DisplayObject::ptr_eq(*c, child))
+                && placements.contains_key(&child.depth())
+                && let Some(anchor) = render_list[index + 1..].iter().copied().find(|next| {
+                    next.placed_by_avm2_script()
+                        || !removed.iter().any(|c| DisplayObject::ptr_eq(*c, *next))
+                })
+            {
+                anchors.insert(child.depth(), anchor);
+            }
+        }
+        anchors
+    }
+
+    fn scene<'gc>(
+        context: &mut UpdateContext<'gc>,
+        count: u16,
+        mixed: bool,
+    ) -> (MovieClip<'gc>, Vec<GotoPlaceObject<'static>>) {
+        let mut clip = MovieClip::new(context.root_swf.clone(), context.gc());
+        assert!(clip.movie().is_action_script_3());
+        let mut placements = Vec::new();
+        for depth in 1..=count {
+            let child = MovieClip::new(context.root_swf.clone(), context.gc());
+            clip.insert_at_index(context, child.into(), (depth - 1).into());
+            child.set_depth(depth.into());
+            child.set_place_frame(if mixed && depth % 5 == 0 { 1 } else { 2 });
+            child.set_placed_by_avm2_script(mixed && depth % 5 == 1);
+            if !mixed || depth % 5 != 2 {
+                placements.push(GotoPlaceObject::new(
+                    1,
+                    swf::PlaceObject {
+                        version: 2,
+                        action: swf::PlaceObjectAction::Place(1),
+                        depth,
+                        matrix: None,
+                        color_transform: None,
+                        // MovieClips survive ID changes on rewind; a changed
+                        // ratio is required to exercise actual replacement.
+                        ratio: Some(1),
+                        name: None,
+                        clip_depth: None,
+                        class_name: None,
+                        filters: None,
+                        background_color: None,
+                        blend_mode: None,
+                        clip_actions: None,
+                        has_image: false,
+                        is_bitmap_cached: None,
+                        is_visible: None,
+                        amf_data: None,
+                    },
+                    true,
+                    depth.into(),
+                    0,
+                    2,
+                ));
+            }
+        }
+        (clip, placements)
+    }
+
+    fn player() -> std::sync::Arc<std::sync::Mutex<crate::Player>> {
+        // Only the AS3 header is needed; no fixture scripts are executed.
+        let movie = SwfMovie::from_data(
+            include_bytes!("../../../../../crates/zm-player/tests/fixtures/TimelineOverlay.swf"),
+            "file:///rewind-test.swf".into(),
+            None,
+            None,
+        )
+        .unwrap();
+        PlayerBuilder::new().with_movie(movie).build()
+    }
+
+    #[test]
+    fn rewind_anchors_preserve_mixed_timeline_and_script_siblings() {
+        player()
+            .lock()
+            .unwrap()
+            .mutate_with_update_context(|context| {
+                for count in [0, 1, 2, 5, 16, 63, 128] {
+                    for mixed in [false, true] {
+                        let (clip, commands) = scene(context, count, mixed);
+                        let placements = commands.iter().map(|c| (c.depth(), c)).collect();
+                        let expected = old_anchors(clip, &placements);
+                        let actual = clip.rewind_anchors(&placements, 1);
+                        assert_eq!(expected.len(), actual.len());
+                        if mixed && count >= 5 {
+                            assert!(!actual.is_empty());
+                        }
+                        if !mixed {
+                            assert!(actual.is_empty());
+                        }
+                        for (depth, anchor) in expected {
+                            assert!(DisplayObject::ptr_eq(actual[&depth], anchor));
+                        }
+                    }
+                }
+            });
+    }
+
+    #[test]
+    #[ignore = "synthetic scaling benchmark; run release with --nocapture"]
+    fn profile_rewind_anchors() {
+        player()
+            .lock()
+            .unwrap()
+            .mutate_with_update_context(|context| {
+                for count in [128, 512, 1024] {
+                    let (clip, commands) = scene(context, count, false);
+                    let placements = commands.iter().map(|c| (c.depth(), c)).collect();
+                    let mut old = Vec::new();
+                    let mut new = Vec::new();
+                    for round in 0..5 {
+                        for baseline in if round % 2 == 0 {
+                            [true, false]
+                        } else {
+                            [false, true]
+                        } {
+                            let started = Instant::now();
+                            let result = if baseline {
+                                old_anchors(clip, &placements)
+                            } else {
+                                clip.rewind_anchors(&placements, 1)
+                            };
+                            black_box(result);
+                            let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                            if baseline {
+                                old.push(elapsed);
+                            } else {
+                                new.push(elapsed);
+                            }
+                        }
+                    }
+                    old.sort_by(f64::total_cmp);
+                    new.sort_by(f64::total_cmp);
+                    println!(
+                        "rewind children={count} baseline_median_ms={:.6} reverse_median_ms={:.6}",
+                        old[2], new[2]
+                    );
+                }
+            });
     }
 }

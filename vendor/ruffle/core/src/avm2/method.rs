@@ -277,7 +277,9 @@ impl<'gc> Method<'gc> {
 
         match &self.0.method_kind {
             MethodKind::Bytecode { verified_info } if verified_info.get().is_none() => {
-                let info = crate::avm2::verify::verify_method(activation, self)?;
+                let info = super::perf::measure_verification(self, || {
+                    crate::avm2::verify::verify_method(activation, self)
+                })?;
 
                 Gc::write(activation.gc(), self.0);
 

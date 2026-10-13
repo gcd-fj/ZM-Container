@@ -15,7 +15,7 @@ use zm_core::{GameKind, Result, TimingSamples, ZmError};
 mod swf_patch;
 
 const HOME_URL: &str = "https://www.4399.com/flash/zmhj.htm";
-const PATCH_VERSION: u32 = 5;
+const PATCH_VERSION: u32 = 7;
 const ZM4_BRIDGE_ABC: &[u8] = include_bytes!("../../../assets/bridge/ZmLinuxZm4Bridge.abc");
 const ZM5_BRIDGE_ABC: &[u8] = include_bytes!("../../../assets/bridge/ZmLinuxZm5Bridge.abc");
 

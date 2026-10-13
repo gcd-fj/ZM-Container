@@ -946,6 +946,7 @@ impl<'a, 'gc> Activation<'a, 'gc> {
         *self.context.actions_since_timeout_check += 1;
         if *self.context.actions_since_timeout_check >= 10000 {
             *self.context.actions_since_timeout_check = 0;
+            super::perf::sample_checkpoint(self.context.avm2);
             if self.context.update_start.elapsed() >= self.context.max_execution_duration {
                 return Err(
                     "A script in this movie has taken too long to execute and has been terminated."

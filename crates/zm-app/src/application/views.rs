@@ -115,9 +115,10 @@ impl ZmApp {
         let next_frame = self.player.tick(GameFrameInput {
             viewport: game_rect,
             events,
+            // Diagnostics is non-modal: clicking the game can restore keyboard
+            // control while it stays open. egui still owns focused UI controls.
             focused: (response.has_focus() || response.hovered())
                 && !self.confirm_switch
-                && !self.diagnostics_open
                 && !self.account_picker_open
                 && ctx.memory(|memory| memory.focused().is_none_or(|id| id == response.id)),
         });

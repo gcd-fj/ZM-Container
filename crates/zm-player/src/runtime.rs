@@ -455,7 +455,6 @@ impl GameRuntime {
         let external = ZmExternalInterface {
             page_url: request.movie_url.clone(),
             game: request.game,
-            uid: request.uid,
             account: request.account_name.clone(),
             events: events.clone(),
             secrets: self.secrets.clone(),
@@ -693,7 +692,7 @@ impl GameRuntime {
 
     pub fn diagnostics(&self) -> String {
         let mut output = format!(
-            "ZM-Container={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1,json-owned-tree-v1,data-phase-trace-v1\nMode=embedded\nVolume={:.2}\n",
+            "ZM-Container={}\nRuffle revision={}\nRuffle patches=json-number-precision-v1,date-formats-v1,bitmap-cache-origin-v1,timeline-overlay-v2,visible-render-bounds-v1,empty-filter-bounds-v1,sort-on-primitives-v1,slow-phase-trace-v1,json-owned-tree-v1,data-phase-trace-v1,rewind-linear-v1,bytearray-buffer-move-v1,callback-phase-trace-v1,avm2-stack-sample-v1,text-layout-total-v1\nMode=embedded\nVolume={:.2}\n",
             env!("CARGO_PKG_VERSION"),
             RUFFLE_REVISION,
             self.volume
@@ -813,20 +812,22 @@ fn run_local_tasks(queue: &TaskQueue) -> TaskPollReport {
 struct ZmExternalInterface {
     page_url: String,
     game: GameKind,
-    uid: u64,
     account: String,
     events: RuntimeEventSender,
     secrets: Arc<Mutex<Vec<String>>>,
 }
 
-fn payment_url(game: GameKind, uid: u64, account: &str) -> Url {
-    let mut url = Url::parse("https://save.api.4399.com/exchange/v2/flash/Pay")
-        .expect("static payment URL must be valid");
+fn payment_url(game: GameKind, account: &str) -> Url {
+    // The legacy save API redirect drops recipient fields. The official payment
+    // page reads `uname` and resolves the payee even without a browser login.
+    let mut url = Url::parse("https://cz.4399.com/").expect("static payment URL must be valid");
     url.query_pairs_mut()
-        .append_pair("gameid", &game.game_id().to_string())
-        .append_pair("userid", &uid.to_string())
-        .append_pair("username", account)
-        .append_pair("money", "10");
+        .append_pair("ac", "paygame")
+        .append_pair("union", &game.profile().payment_union_id.to_string())
+        .append_pair("uname", account)
+        // Preserve the old redirect's initial amount; the user chooses payment
+        // details on the official page.
+        .append_pair("je", "1");
     url
 }
 
@@ -855,7 +856,7 @@ impl ExternalInterfaceProvider for ZmExternalInterface {
                 ExternalValue::Undefined
             }
             "zmLinux.payMoney" => {
-                let url = payment_url(self.game, self.uid, &self.account);
+                let url = payment_url(self.game, &self.account);
                 let event = match open_official_web_url(&url) {
                     Ok(()) => RuntimeEvent::PaymentOpened,
                     Err(error) => RuntimeEvent::PaymentOpenFailed(error),
@@ -1084,26 +1085,38 @@ mod tests {
     }
 
     #[test]
-    fn payment_url_uses_the_selected_game_and_account() {
-        let url = payment_url(GameKind::Zm5, 3940522873, "测试 account");
-        let pairs = url
-            .query_pairs()
-            .collect::<std::collections::HashMap<_, _>>();
-        assert_eq!(url.scheme(), "https");
-        assert_eq!(url.host_str(), Some("save.api.4399.com"));
-        assert_eq!(
-            pairs.get("gameid").map(|value| value.as_ref()),
-            Some("100051601")
-        );
-        assert_eq!(
-            pairs.get("userid").map(|value| value.as_ref()),
-            Some("3940522873")
-        );
-        assert_eq!(
-            pairs.get("username").map(|value| value.as_ref()),
-            Some("测试 account")
-        );
-        assert_eq!(pairs.get("money").map(|value| value.as_ref()), Some("10"));
+    fn payment_link_targets_the_official_payee_prefill_contract_for_both_games() {
+        for (game, union) in [(GameKind::Zm4, "10037"), (GameKind::Zm5, "10049")] {
+            let url = payment_url(game, "fixture_account");
+            let pairs = url
+                .query_pairs()
+                .collect::<std::collections::HashMap<_, _>>();
+            assert_eq!(url.scheme(), "https");
+            assert_eq!(url.host_str(), Some("cz.4399.com"));
+            assert_eq!(url.path(), "/");
+            assert_eq!(pairs.get("ac").map(|v| v.as_ref()), Some("paygame"));
+            assert_eq!(pairs.get("union").map(|v| v.as_ref()), Some(union));
+            assert_eq!(
+                pairs.get("uname").map(|v| v.as_ref()),
+                Some("fixture_account")
+            );
+            assert_eq!(pairs.get("je").map(|v| v.as_ref()), Some("1"));
+            assert_eq!(pairs.len(), 4);
+        }
+    }
+
+    #[test]
+    fn payment_link_encodes_the_recipient_without_injecting_payment_options() {
+        let account = "测试+account&union=99999#@example.com";
+        let url = payment_url(GameKind::Zm5, account);
+        let pairs: Vec<_> = url.query_pairs().collect();
+        assert_eq!(pairs.iter().filter(|(k, _)| k == "union").count(), 1);
+        assert_eq!(pairs.iter().filter(|(k, _)| k == "uname").count(), 1);
+        assert_eq!(pairs.iter().find(|(k, _)| k == "uname").unwrap().1, account);
+        assert_eq!(pairs.iter().find(|(k, _)| k == "union").unwrap().1, "10049");
+        assert!(url.fragment().is_none());
+        assert!(url.username().is_empty());
+        assert!(url.password().is_none());
     }
 
     #[test]

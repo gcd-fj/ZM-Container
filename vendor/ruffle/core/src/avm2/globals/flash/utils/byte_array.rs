@@ -744,11 +744,15 @@ pub fn compress<'gc>(
             Some(algorithm) => algorithm,
             None => return Err(make_error_2058(activation)),
         };
-        let buffer = bytearray.compress(algorithm);
-        bytearray.clear();
-        bytearray
-            .write_bytes(&buffer)
-            .map_err(|e| e.to_avm(activation))?;
+        let mut buffer = crate::player::measure_slow_phase("bytearray_compress", || {
+            bytearray.compress(algorithm)
+        });
+        // Keep the ByteArray length limit and error behavior of write_bytes.
+        if buffer.len() > u32::MAX as usize {
+            bytearray.clear();
+            return Err(crate::avm2::bytearray::ByteArrayError::IndexOutOfBounds.to_avm(activation));
+        }
+        bytearray.swap_storage_with(&mut buffer);
         bytearray.set_position(bytearray.len());
     }
 
@@ -768,17 +772,19 @@ pub fn uncompress<'gc>(
             Some(algorithm) => algorithm,
             None => return Err(make_error_2058(activation)),
         };
-        let buffer = match crate::player::measure_slow_phase("bytearray_decompress", || {
+        let mut buffer = match crate::player::measure_slow_phase("bytearray_decompress", || {
             bytearray.decompress(algorithm)
         }) {
             Some(buffer) => buffer,
             None => return Err(make_error_2058(activation)),
         };
-        bytearray.clear();
-        bytearray
-            .write_bytes(&buffer)
-            .map_err(|e| e.to_avm(activation))?;
-        bytearray.set_position(0);
+        if buffer.len() > u32::MAX as usize {
+            bytearray.clear();
+            return Err(crate::avm2::bytearray::ByteArrayError::IndexOutOfBounds.to_avm(activation));
+        }
+        // The decoder already owns a complete output allocation. Adopt it
+        // instead of zero-filling and copying the entire output a second time.
+        bytearray.swap_storage_with(&mut buffer);
     }
 
     Ok(Value::Undefined)
@@ -905,4 +911,79 @@ pub fn set_object_encoding<'gc>(
     }
 
     Ok(Value::Undefined)
+}
+
+#[cfg(test)]
+mod buffer_performance_tests {
+    use super::*;
+    use crate::PlayerBuilder;
+    use crate::avm2::bytearray::ByteArrayStorage;
+    use crate::avm2::object::ByteArrayObject;
+    use std::{hint::black_box, time::Instant};
+
+    #[test]
+    #[ignore = "synthetic allocation benchmark; run release with --nocapture"]
+    fn profile_bytearray_uncompress_buffer() {
+        let size = 32 * 1024 * 1024;
+        let compressed = {
+            let player = PlayerBuilder::new().build();
+            player
+                .lock()
+                .unwrap()
+                .mutate_with_update_context(|context| {
+                    ByteArrayStorage::from_vec(context, vec![0x61; size])
+                        .compress(CompressionAlgorithm::Zlib)
+                })
+        };
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for round in 0..7 {
+            for baseline in if round % 2 == 0 {
+                [true, false]
+            } else {
+                [false, true]
+            } {
+                let player = PlayerBuilder::new().build();
+                player
+                    .lock()
+                    .unwrap()
+                    .mutate_with_update_context(|context| {
+                        let storage = ByteArrayStorage::from_vec(context, compressed.clone());
+                        let object = ByteArrayObject::from_storage(context, storage);
+                        let mut activation = Activation::from_nothing(context);
+                        let algorithm: Value<'_> =
+                            AvmString::new_utf8(activation.gc(), "zlib").into();
+                        let started = Instant::now();
+                        if baseline {
+                            let object: Object<'_> = object.into();
+                            let mut storage = object.as_bytearray_mut().unwrap();
+                            let buffer = storage.decompress(CompressionAlgorithm::Zlib).unwrap();
+                            storage.clear();
+                            storage.write_bytes(&buffer).unwrap();
+                            storage.set_position(0);
+                        } else {
+                            uncompress(&mut activation, object.into(), &[algorithm]).unwrap();
+                        }
+                        let elapsed = started.elapsed().as_secs_f64() * 1000.0;
+                        let object: Object<'_> = object.into();
+                        let output = object.as_bytearray().unwrap();
+                        assert_eq!(output.len(), size);
+                        assert_eq!(output.position(), 0);
+                        assert!(output.bytes().iter().all(|byte| *byte == 0x61));
+                        black_box(output.bytes());
+                        if baseline {
+                            before.push(elapsed);
+                        } else {
+                            after.push(elapsed);
+                        }
+                    });
+            }
+        }
+        before.sort_by(f64::total_cmp);
+        after.sort_by(f64::total_cmp);
+        println!(
+            "bytearray uncompress output_bytes={size} copy_median_ms={:.3} move_median_ms={:.3}",
+            before[3], after[3]
+        );
+    }
 }

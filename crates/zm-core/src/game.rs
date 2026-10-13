@@ -7,6 +7,8 @@ pub struct GameProfile {
     pub bridge_class: &'static str,
     pub server: &'static str,
     pub port: u16,
+    /// Official cz.4399.com recharge identifier, distinct from the save API game ID.
+    pub payment_union_id: u32,
 }
 
 impl GameKind {
@@ -18,6 +20,7 @@ impl GameKind {
                 bridge_class: "ZmLinuxZm4Bridge",
                 server: "g1-zm4.4399zmxy.com",
                 port: 3010,
+                payment_union_id: 10037,
             },
             Self::Zm5 => &GameProfile {
                 resource_root: "https://sda.4399.com/4399swf/upload_swf/ftp22/csya/20170622/1/",
@@ -25,6 +28,7 @@ impl GameKind {
                 bridge_class: "ZmLinuxZm5Bridge",
                 server: "101.42.229.203",
                 port: 3010,
+                payment_union_id: 10049,
             },
         }
     }

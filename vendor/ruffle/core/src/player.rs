@@ -85,8 +85,7 @@ use web_time::Instant;
 /// be added together or interpreted as GPU execution time.
 #[inline]
 pub(crate) fn measure_slow_phase<T>(phase: &'static str, operation: impl FnOnce() -> T) -> T {
-    let started = tracing::enabled!(target: "zm_perf", tracing::Level::INFO)
-        .then(Instant::now);
+    let started = tracing::enabled!(target: "zm_perf", tracing::Level::INFO).then(Instant::now);
     let result = operation();
     if let Some(started) = started {
         let elapsed = started.elapsed();
@@ -96,6 +95,33 @@ pub(crate) fn measure_slow_phase<T>(phase: &'static str, operation: impl FnOnce(
                 phase,
                 elapsed_ms = elapsed.as_secs_f64() * 1000.0,
                 "Slow player phase (CPU wall time; nested phases may overlap)"
+            );
+        }
+    }
+    result
+}
+
+/// Time only event/timer callbacks, rather than every interpreted method.
+/// Method names are code metadata; no arguments, receivers, URLs or payloads
+/// are recorded. Nested callbacks can overlap in the resulting timings.
+#[inline]
+pub(crate) fn measure_slow_callback<T>(
+    phase: &'static str,
+    callback: crate::avm2::object::FunctionObject<'_>,
+    operation: impl FnOnce() -> T,
+) -> T {
+    let started = tracing::enabled!(target: "zm_perf", tracing::Level::INFO).then(Instant::now);
+    let _trace = started.map(|_| crate::avm2::perf::CallbackGuard::enter());
+    let result = operation();
+    if let Some(started) = started {
+        let elapsed = started.elapsed();
+        if elapsed >= Duration::from_millis(25) {
+            tracing::info!(
+                target: "zm_perf",
+                phase,
+                method = %callback.executable().debug_full_name().to_utf8_lossy(),
+                elapsed_ms = elapsed.as_secs_f64() * 1000.0,
+                "Slow AVM2 callback (CPU wall time; nested phases may overlap)"
             );
         }
     }
@@ -2037,8 +2063,7 @@ impl Player {
             ),
             LoadBehavior::Blocking => (ExecutionLimit::none(), false),
         };
-        let preload_finished =
-            measure_slow_phase("preload", || self.preload(&mut execution_limit));
+        let preload_finished = measure_slow_phase("preload", || self.preload(&mut execution_limit));
 
         if !preload_finished && !may_execute_while_streaming {
             return;
@@ -2049,7 +2074,9 @@ impl Player {
             measure_slow_phase("avm2_frame", || run_all_phases_avm2(context));
             measure_slow_phase("avm1_frame", || Avm1::run_frame(context));
             measure_slow_phase("frame_audio", || AudioManager::update_sounds(context));
-            measure_slow_phase("local_connections", || LocalConnections::update_connections(context));
+            measure_slow_phase("local_connections", || {
+                LocalConnections::update_connections(context)
+            });
 
             // Only run the current list of callbacks - any callbacks added during callback execution
             // will be run at the end of the *next* frame.

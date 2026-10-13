@@ -874,6 +874,7 @@ impl<'gc> EditText<'gc> {
     /// have already been calculated and applied to HTML trees lowered into the
     /// text-span representation.
     pub fn relayout(self, context: &mut UpdateContext<'gc>) {
+        let layout_started = crate::avm2::perf::start_native();
         let autosize = self.0.autosize.get();
         let is_word_wrap = self.0.flags.get().contains(EditTextFlag::WORD_WRAP);
         let movie = self.0.shared.swf.clone();
@@ -939,6 +940,7 @@ impl<'gc> EditText<'gc> {
         }
         self.0.autosize_lazy_bounds.set(Some(autosize_bounds));
         self.invalidate_cached_bitmap();
+        crate::avm2::perf::finish_text_layout(layout_started, !self.visible());
     }
 
     /// Apply lazily calculated autosize bounds.

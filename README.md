@@ -2,6 +2,8 @@
 
 使用 Rust 编写的造梦西游 4 / 5 桌面客户端，采用 egui + 内嵌 Ruffle。游戏资源在启动时从官方地址获取，不随程序分发。
 
+当前发布版本：[v0.1.3](https://github.com/gcd-fj/ZM-Container/releases/tag/v0.1.3)。
+
 项目原名 ZM-LINUX，现名 **ZM-Container**，仓库地址为 [gcd-fj/ZM-Container](https://github.com/gcd-fj/ZM-Container)。新构建的可执行程序名为 `zm-container`，Windows 为 `zm-container.exe`；已发布历史版本的附件仍保留原文件名。
 
 项目参考 [zmBox](https://gitee.com/duskeye/zmBox) 的游戏宿主交互流程，重新设计 Rust 应用结构。目标平台为 Linux x86_64、Windows x86_64 和 macOS Apple 芯片；跨平台构建由 CI 验证，实际游戏兼容性仍需逐项测试。
@@ -38,6 +40,8 @@ cargo build --release --locked --bin zm-container
 
 分段耗时、空闲 CPU/RSS 采样及两款游戏的性能验收步骤见 [性能采样与验收](docs/PERFORMANCE.md)。诊断中的 `tick_hz` 表示宿主调用播放器的频率，不等同于实际游戏呈现帧率。
 
+造梦西游 5 怪物死亡时的卡顿调用栈、出生点查询与隐藏日志排版优化和验证范围见 [本次排查记录](docs/PERFORMANCE-2026-09-30.md)。
+
 Windows 使用 MSVC Rust 工具链及 Visual Studio C++ 构建工具，执行同样的 Cargo 命令，程序为 `target/release/zm-container.exe`。
 
 macOS 使用 Apple 芯片 Mac、Xcode Command Line Tools 和原生 Rust 工具链。Windows 便携 EXE 压缩包、macOS APP/DMG 的生成命令与签名说明见 [跨平台打包](docs/PACKAGING.md)。
@@ -54,6 +58,7 @@ cargo test --workspace --locked
 2. 登录需要验证码时填写图片内容；图片失败可单独刷新。准备阶段可取消启动。
 3. 游戏工具栏支持音量、诊断、账号切换、全屏及退出。F11 切换全屏，Esc 退出全屏。
 4. 设置中可清理资源缓存、查看上次游戏诊断。Linux 另提供桌面入口安装和卸载。
+5. 游戏内充值会在默认浏览器打开对应游戏的 4399 官方充值页，并预填当前游戏账号。浏览器的登录状态与客户端会话独立。
 
 游戏加载期间，窗口底部会显示待完成的资源请求数及本次累计接收的数据量。它反映下载活动，不代表游戏整体加载百分比；游戏原有的进度条仍由游戏控制。
 

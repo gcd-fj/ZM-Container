@@ -8,6 +8,9 @@ use swf::avm2::{
 };
 use zm_core::{GameKind, Result, ZmError};
 
+mod monster_birth;
+mod text_log;
+
 const SYMBOL_CLASS: u16 = 76;
 const SHOW_FRAME: u16 = 1;
 const DO_ABC: u16 = 82;
@@ -126,19 +129,39 @@ fn patch_zm5_runtime(body: &mut Vec<u8>) -> Result<()> {
 
         if code == DO_ABC {
             let payload = &body[start..end];
-            if payload
+            let main_program = payload
                 .windows(b"CreateGmCmd".len())
-                .any(|part| part == b"CreateGmCmd")
-            {
+                .any(|p| p == b"CreateGmCmd");
+            let birth_manager = payload
+                .windows(b"ManCreateManager".len())
+                .any(|p| p == b"ManCreateManager");
+            let text_logger = payload
+                .windows(b"SimpleTextLog".len())
+                .any(|p| p == b"SimpleTextLog");
+            if main_program || birth_manager || text_logger {
                 let abc_offset = do_abc_data_offset(payload)?;
                 let mut abc = AbcReader::new(&payload[abc_offset..])
                     .read()
                     .map_err(|error| ZmError::Asset(format!("解析造梦西游5主程序失败：{error}")))?;
-                let outcome = patch_zm5_abc(&mut abc)?;
-                if !outcome.release_mode || !outcome.gm_command {
-                    return Err(ZmError::Asset(
-                        "造梦西游5主程序结构已变化，无法安全关闭开发工具".into(),
-                    ));
+                if main_program {
+                    let outcome = patch_zm5_abc(&mut abc)?;
+                    if !outcome.release_mode || !outcome.gm_command {
+                        return Err(ZmError::Asset(
+                            "造梦西游5主程序结构已变化，无法安全关闭开发工具".into(),
+                        ));
+                    }
+                }
+                let birth_lookup = monster_birth::patch(&mut abc);
+                if birth_manager {
+                    tracing::info!(target: "zm_perf", applied = birth_lookup, "ZM5 guarded birth lookup fast path");
+                }
+                let hidden_log = text_log::patch(&mut abc);
+                if text_logger {
+                    tracing::info!(target: "zm_perf", applied = hidden_log, "ZM5 deferred hidden text log");
+                }
+                if !main_program && !birth_lookup && !hidden_log {
+                    cursor = end;
+                    continue;
                 }
 
                 let mut encoded_abc = Vec::with_capacity(payload.len() - abc_offset);
@@ -148,8 +171,11 @@ fn patch_zm5_runtime(body: &mut Vec<u8>) -> Result<()> {
                 let mut replacement = Vec::with_capacity(abc_offset + encoded_abc.len());
                 replacement.extend_from_slice(&payload[..abc_offset]);
                 replacement.extend_from_slice(&encoded_abc);
-                body.splice(cursor..end, encode_tag(DO_ABC, &replacement));
-                return Ok(());
+                let tag = encode_tag(DO_ABC, &replacement);
+                let next = cursor + tag.len();
+                body.splice(cursor..end, tag);
+                cursor = next;
+                continue;
             }
         }
 
@@ -603,5 +629,393 @@ mod tests {
         assert_eq!(abc.method_bodies[0].code, vec![0x47]);
         assert_eq!(abc.method_bodies[0].max_stack, 0);
         assert_eq!(abc.method_bodies[0].max_scope_depth, 1);
+    }
+}
+
+#[cfg(test)]
+mod birth_lookup_tests {
+    use super::*;
+    use ruffle_core::{LoadBehavior, PlayerBuilder, backend::log::LogBackend, tag_utils::SwfMovie};
+    use std::sync::{Arc, Mutex};
+
+    const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/MonsterBirthLookup.swf");
+
+    pub(super) fn decode(source: &[u8]) -> Vec<u8> {
+        match &source[..3] {
+            b"FWS" => source[8..].to_vec(),
+            b"CWS" => {
+                let mut body = Vec::new();
+                ZlibDecoder::new(&source[8..])
+                    .read_to_end(&mut body)
+                    .unwrap();
+                body
+            }
+            _ => panic!("unexpected fixture compression"),
+        }
+    }
+
+    fn abc_with_lookup(source: &[u8]) -> AbcFile {
+        abc_with_class(source, b"ManCreateManager")
+    }
+
+    pub(super) fn abc_with_class(source: &[u8], class: &[u8]) -> AbcFile {
+        let body = decode(source);
+        let mut cursor = frame_header_len(&body).unwrap();
+        while cursor + 2 <= body.len() {
+            let (kind, header, length) = tag_header(&body, cursor).unwrap();
+            let payload = &body[cursor + header..cursor + header + length];
+            if kind == DO_ABC && payload.windows(class.len()).any(|p| p == class) {
+                return AbcReader::new(&payload[do_abc_data_offset(payload).unwrap()..])
+                    .read()
+                    .unwrap();
+            }
+            cursor += header + length;
+        }
+        panic!("fixture manager missing");
+    }
+
+    pub(super) fn patch_swf(source: &[u8]) -> Vec<u8> {
+        let mut body = decode(source);
+        patch_zm5_runtime(&mut body).unwrap();
+        let mut result = b"FWS".to_vec();
+        result.push(source[3]);
+        result.extend_from_slice(&((8 + body.len()) as u32).to_le_bytes());
+        result.extend(body);
+        result
+    }
+
+    struct Log(Arc<Mutex<Vec<String>>>);
+    impl LogBackend for Log {
+        fn avm_trace(&self, message: &str) {
+            self.0.lock().unwrap().push(message.to_owned());
+        }
+        fn avm_warning(&self, message: &str) {
+            panic!("AVM warning: {message}");
+        }
+    }
+
+    fn run(source: &[u8], behavior: LoadBehavior) -> u32 {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let player = PlayerBuilder::new()
+            .with_movie(
+                SwfMovie::from_data(source, "file:///MonsterBirthLookup.swf".into(), None, None)
+                    .unwrap(),
+            )
+            .with_autoplay(true)
+            .with_load_behavior(behavior)
+            .with_log(Log(output.clone()))
+            .build();
+        for _ in 0..3 {
+            player.lock().unwrap().run_frame();
+        }
+        let output = output.lock().unwrap();
+        assert_eq!(output.len(), 2, "{output:?}");
+        assert_eq!(output[1], "MONSTER_BIRTH_LOOKUP_OK");
+        output[0]
+            .strip_prefix("LOOKUP_BENCH_MS=")
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn birth_lookup_preserves_values_nested_enumeration_removal_and_rebuild() {
+        let patched = patch_swf(FIXTURE);
+        let mut abc = abc_with_lookup(FIXTURE);
+        assert!(monster_birth::patch(&mut abc));
+        assert_eq!(abc, abc_with_lookup(&patched));
+        for behavior in [LoadBehavior::Blocking, LoadBehavior::Streaming] {
+            run(FIXTURE, behavior);
+            run(&patched, behavior);
+        }
+    }
+
+    #[test]
+    fn birth_lookup_is_idempotent_and_skips_unrecognized_bytecode() {
+        let original = abc_with_lookup(FIXTURE);
+        let mut patched = original.clone();
+        assert!(monster_birth::patch(&mut patched));
+        let once = patched.clone();
+        assert!(!monster_birth::patch(&mut patched));
+        assert_eq!(patched, once);
+        // Find the body changed by the patch, without depending on compiler indices.
+        let index = original
+            .method_bodies
+            .iter()
+            .zip(&once.method_bodies)
+            .position(|(a, b)| a.code != b.code)
+            .unwrap();
+        let mut unknown = original.clone();
+        unknown.method_bodies[index].code.insert(0, 0x02); // unrecognized NOP
+        let unchanged = unknown.clone();
+        assert!(!monster_birth::patch(&mut unknown));
+        assert_eq!(unknown, unchanged);
+        let mut wrong_branch = original;
+        let code = &mut wrong_branch.method_bodies[index].code;
+        use swf::extensions::ReadSwfExt;
+        let mut reader = AbcReader::new(code);
+        let mut jump = None;
+        while !reader.as_slice().is_empty() {
+            let offset = code.len() - reader.as_slice().len();
+            if matches!(reader.read_op().unwrap(), Op::Jump { .. }) {
+                jump = Some(offset);
+                break;
+            }
+        }
+        code[jump.unwrap() + 1] ^= 1;
+        let unchanged = wrong_branch.clone();
+        assert!(!monster_birth::patch(&mut wrong_branch));
+        assert_eq!(wrong_branch, unchanged);
+    }
+
+    #[test]
+    fn birth_lookup_skips_a_changed_builder_or_unrelated_class() {
+        let mut changed_builder = abc_with_lookup(FIXTURE);
+        let method = changed_builder
+            .instances
+            .iter()
+            .flat_map(|i| &i.traits)
+            .find_map(|t| {
+                if multiname_local_name(&changed_builder, t.name) != Some(b"buildBirthFromObjectVo")
+                {
+                    return None;
+                }
+                match t.kind {
+                    TraitKind::Method { method, .. } => Some(method),
+                    _ => None,
+                }
+            })
+            .unwrap();
+        let body = changed_builder.methods[method.0 as usize].body.unwrap();
+        changed_builder.method_bodies[body.0 as usize].code = vec![0x47];
+        let unchanged = changed_builder.clone();
+        assert!(!monster_birth::patch(&mut changed_builder));
+        assert_eq!(changed_builder, unchanged);
+
+        let mut unrelated = abc_with_lookup(FIXTURE);
+        let manager = unrelated
+            .instances
+            .iter()
+            .position(|i| multiname_local_name(&unrelated, i.name) == Some(b"ManCreateManager"))
+            .unwrap();
+        let other = unrelated
+            .instances
+            .iter()
+            .find(|i| multiname_local_name(&unrelated, i.name) == Some(b"MonsterBirthLookup"))
+            .unwrap()
+            .name;
+        unrelated.instances[manager].name = other;
+        let unchanged = unrelated.clone();
+        assert!(!monster_birth::patch(&mut unrelated));
+        assert_eq!(unrelated, unchanged);
+    }
+
+    #[test]
+    #[ignore = "manual release benchmark; no wall-clock threshold in CI"]
+    fn profile_birth_lookup() {
+        let patched = patch_swf(FIXTURE);
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for round in 0..7 {
+            if round % 2 == 0 {
+                before.push(run(FIXTURE, LoadBehavior::Blocking));
+                after.push(run(&patched, LoadBehavior::Blocking));
+            } else {
+                after.push(run(&patched, LoadBehavior::Blocking));
+                before.push(run(FIXTURE, LoadBehavior::Blocking));
+            }
+        }
+        before.sort_unstable();
+        after.sort_unstable();
+        eprintln!(
+            "44-entry dictionary, 8 death checks, 40 dependency lookups each: original_median_ms={} patched_median_ms={} original={before:?} patched={after:?}",
+            before[3], after[3]
+        );
+    }
+
+    #[test]
+    #[ignore = "optional read-only check against a locally cached game SWF"]
+    fn verify_local_birth_lookup_patch() {
+        let source =
+            std::fs::read(std::env::var("ZM_PROBE_SWF").expect("set ZM_PROBE_SWF")).unwrap();
+        let mut abc = abc_with_lookup(&source);
+        let before = abc.clone();
+        assert!(
+            monster_birth::patch(&mut abc),
+            "cached method no longer matches reviewed lookup"
+        );
+        let changed = before
+            .method_bodies
+            .iter()
+            .zip(&abc.method_bodies)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(changed, 1);
+        let mut encoded = Vec::new();
+        AbcWriter::new(&mut encoded).write(abc.clone()).unwrap();
+        let roundtrip = AbcReader::new(&encoded).read().unwrap();
+        assert!(roundtrip.method_bodies == abc.method_bodies);
+        let mut reencoded = Vec::new();
+        AbcWriter::new(&mut reencoded).write(roundtrip).unwrap();
+        // Real constant pools contain NaN, which is unequal to itself under
+        // AbcFile's derived PartialEq. Compare the serialized bits instead.
+        assert!(encoded == reencoded, "ABC encoding changed on roundtrip");
+        // Other independent runtime patches may share the same ABC tag.
+        text_log::patch(&mut abc);
+        encoded.clear();
+        AbcWriter::new(&mut encoded).write(abc).unwrap();
+        let through_runtime = abc_with_lookup(&patch_swf(&source));
+        let mut runtime_bytes = Vec::new();
+        AbcWriter::new(&mut runtime_bytes)
+            .write(through_runtime)
+            .unwrap();
+        assert!(
+            runtime_bytes == encoded,
+            "SWF pipeline did not apply the expected method patch"
+        );
+        eprintln!("Local game lookup recognized; exactly one method changed; ABC roundtrip OK");
+    }
+}
+
+#[cfg(test)]
+mod hidden_log_tests {
+    use super::birth_lookup_tests::{abc_with_class, patch_swf};
+    use super::*;
+    use ruffle_core::{LoadBehavior, PlayerBuilder, backend::log::LogBackend, tag_utils::SwfMovie};
+    use std::sync::{Arc, Mutex};
+    const FIXTURE: &[u8] = include_bytes!("../tests/fixtures/HiddenTextLog.swf");
+    struct Log(Arc<Mutex<Vec<String>>>);
+    impl LogBackend for Log {
+        fn avm_trace(&self, message: &str) {
+            self.0.lock().unwrap().push(message.to_owned());
+        }
+        fn avm_warning(&self, message: &str) {
+            panic!("AVM warning: {message}");
+        }
+    }
+    fn run(source: &[u8], behavior: LoadBehavior) -> (u32, Vec<String>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let player = PlayerBuilder::new()
+            .with_movie(
+                SwfMovie::from_data(source, "file:///HiddenTextLog.swf".into(), None, None)
+                    .unwrap(),
+            )
+            .with_autoplay(true)
+            .with_load_behavior(behavior)
+            .with_log(Log(output.clone()))
+            .build();
+        for _ in 0..3 {
+            player.lock().unwrap().run_frame();
+        }
+        let mut output = output.lock().unwrap().clone();
+        assert_eq!(
+            output.last().map(String::as_str),
+            Some("HIDDEN_TEXT_LOG_OK")
+        );
+        let i = output
+            .iter()
+            .position(|s| s.starts_with("HIDDEN_LOG_BENCH_MS="))
+            .unwrap();
+        let ms = output
+            .remove(i)
+            .strip_prefix("HIDDEN_LOG_BENCH_MS=")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert_eq!(output.len(), 1070); // every original trace, including hidden/error/catch paths
+        (ms, output)
+    }
+    #[test]
+    fn hidden_log_preserves_traces_history_reveal_visible_updates_and_exceptions() {
+        let patched = patch_swf(FIXTURE);
+        let mut abc = abc_with_class(FIXTURE, b"SimpleTextLog");
+        assert!(text_log::patch(&mut abc));
+        assert_eq!(abc, abc_with_class(&patched, b"SimpleTextLog"));
+        for behavior in [LoadBehavior::Blocking, LoadBehavior::Streaming] {
+            assert_eq!(run(FIXTURE, behavior).1, run(&patched, behavior).1);
+        }
+    }
+    #[test]
+    fn hidden_log_patch_is_atomic_idempotent_and_rejects_unknown_ui() {
+        let original = abc_with_class(FIXTURE, b"SimpleTextLog");
+        let mut patched = original.clone();
+        assert!(text_log::patch(&mut patched));
+        let once = patched.clone();
+        assert!(!text_log::patch(&mut patched));
+        assert_eq!(patched, once);
+        for method_name in [b"onMouse".as_slice(), b"__keyup", b"txt", b"log"] {
+            let mut unknown = original.clone();
+            let m = unknown
+                .instances
+                .iter()
+                .flat_map(|i| &i.traits)
+                .find_map(|t| {
+                    if multiname_local_name(&unknown, t.name) != Some(method_name) {
+                        return None;
+                    }
+                    match t.kind {
+                        TraitKind::Method { method, .. } | TraitKind::Getter { method, .. } => {
+                            Some(method)
+                        }
+                        _ => None,
+                    }
+                })
+                .unwrap();
+            let index = unknown.methods[m.0 as usize].body.unwrap().0 as usize;
+            unknown.method_bodies[index].code = vec![0x47];
+            let before = unknown.clone();
+            assert!(!text_log::patch(&mut unknown));
+            assert_eq!(unknown, before);
+        }
+    }
+    #[test]
+    #[ignore = "manual release benchmark; no timing threshold in CI"]
+    fn profile_hidden_text_log() {
+        let patched = patch_swf(FIXTURE);
+        let mut before = Vec::new();
+        let mut after = Vec::new();
+        for round in 0..5 {
+            if round % 2 == 0 {
+                before.push(run(FIXTURE, LoadBehavior::Blocking).0);
+                after.push(run(&patched, LoadBehavior::Blocking).0);
+            } else {
+                after.push(run(&patched, LoadBehavior::Blocking).0);
+                before.push(run(FIXTURE, LoadBehavior::Blocking).0);
+            }
+        }
+        before.sort_unstable();
+        after.sort_unstable();
+        eprintln!(
+            "64 hidden log appends after 1000 lines: before_ms={before:?} after_ms={after:?}"
+        );
+    }
+    #[test]
+    #[ignore = "read-only structural check of a locally cached game"]
+    fn verify_local_hidden_text_log_patch() {
+        let source =
+            std::fs::read(std::env::var("ZM_PROBE_SWF").expect("set ZM_PROBE_SWF")).unwrap();
+        let mut abc = abc_with_class(&source, b"SimpleTextLog");
+        let before = abc.clone();
+        assert!(text_log::patch(&mut abc), "unrecognized game logger");
+        assert_eq!(
+            before
+                .method_bodies
+                .iter()
+                .zip(&abc.method_bodies)
+                .filter(|(a, b)| a != b)
+                .count(),
+            3
+        );
+        let mut encoded = Vec::new();
+        AbcWriter::new(&mut encoded).write(abc).unwrap();
+        let mut runtime = Vec::new();
+        AbcWriter::new(&mut runtime)
+            .write(abc_with_class(&patch_swf(&source), b"SimpleTextLog"))
+            .unwrap();
+        assert!(encoded == runtime, "pipeline differs from isolated patch");
+        let decoded = AbcReader::new(&encoded).read().unwrap();
+        let mut roundtrip = Vec::new();
+        AbcWriter::new(&mut roundtrip).write(decoded).unwrap();
+        assert!(encoded == roundtrip, "ABC roundtrip differs");
     }
 }

@@ -43,6 +43,20 @@ impl<'gc> CallStack<'gc> {
         }
     }
 
+    /// Code names only, bounded separately from user-visible exception stacks.
+    pub(crate) fn performance_sample(&self, limit: usize) -> Vec<String> {
+        self.stack
+            .iter()
+            .rev()
+            .take(limit)
+            .map(|method| {
+                let mut name = WString::new();
+                display_function(&mut name, *method);
+                name.to_utf8_lossy().chars().take(512).collect()
+            })
+            .collect()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }

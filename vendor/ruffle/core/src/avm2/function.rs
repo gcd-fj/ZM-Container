@@ -238,7 +238,10 @@ pub fn exec<'gc>(
 
             activation.context.avm2.push_call(mc, method);
 
-            native_method(&mut activation, receiver, &arguments)
+            let started = super::perf::start_native();
+            let result = native_method(&mut activation, receiver, &arguments);
+            super::perf::finish_native(started, activation.context.avm2);
+            result
         }
         MethodKind::Bytecode { .. } => {
             if method.body().is_none() {

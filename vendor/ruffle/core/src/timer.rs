@@ -155,7 +155,9 @@ impl<'gc> Timers<'gc> {
                         };
 
                         let params = FunctionArgs::from_slice(&params);
-                        closure.call(&mut avm2_activation, Avm2Value::Null, params)
+                        crate::player::measure_slow_callback("timer_callback", closure, || {
+                            closure.call(&mut avm2_activation, Avm2Value::Null, params)
+                        })
                     };
 
                     match run_closure() {

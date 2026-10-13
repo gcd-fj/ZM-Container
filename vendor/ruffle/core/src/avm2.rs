@@ -67,6 +67,7 @@ pub mod object;
 mod op;
 mod optimizer;
 mod parameters;
+pub(crate) mod perf;
 pub mod property;
 mod property_map;
 mod qname;

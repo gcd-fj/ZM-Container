@@ -408,7 +408,9 @@ fn dispatch_event_to_target<'gc>(
         let global = activation.context.avm2.toplevel_global_object().unwrap();
 
         let args = &[event.into()];
-        let result = handler.call(activation, global.into(), FunctionArgs::from_slice(args));
+        let result = crate::player::measure_slow_callback("event_callback", *handler, || {
+            handler.call(activation, global.into(), FunctionArgs::from_slice(args))
+        });
         if let Err(err) = result {
             let event_name = event.event().event_type();
 

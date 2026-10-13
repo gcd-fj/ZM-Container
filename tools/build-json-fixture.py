@@ -11,8 +11,10 @@ import tempfile
 root = Path(__file__).resolve().parent.parent
 fixture = root / "crates/zm-player/tests/fixtures"
 parser = argparse.ArgumentParser(description=__doc__)
-parser.add_argument("name", nargs="?", default="JsonNumbers", choices=["JsonNumbers", "ArraySortOn"])
+parser.add_argument("name", nargs="?", default="JsonNumbers", choices=["JsonNumbers", "ArraySortOn", "ByteArrayRoundTrip", "SlowCallbackTrace", "MonsterBirthLookup", "HiddenTextLog"])
 name = parser.parse_args().name
+if name in ("MonsterBirthLookup", "HiddenTextLog"):
+    fixture = root / "crates/zm-assets/tests/fixtures"
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / (name + ".as")
     shutil.copyfile(fixture / source.name, source)
